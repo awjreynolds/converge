@@ -44,6 +44,24 @@ describe("JsonFilePairingSessionStore", () => {
       /Invalid Pairing Session JSON in .*session-1\.json/,
     );
   });
+
+  it("rejects persisted sessions with an unknown lifecycle status", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "converge-core-"));
+    directories.push(workspace);
+    const sessionsDirectory = join(workspace, ".converge", "sessions");
+    await mkdir(sessionsDirectory, { recursive: true });
+    await writeFile(
+      join(sessionsDirectory, "session-1.json"),
+      JSON.stringify({ ...exampleSession(), status: "teleported" }),
+      "utf8",
+    );
+
+    const store = JsonFilePairingSessionStore.forWorkspace(workspace);
+
+    await expect(store.load("session-1")).rejects.toThrow(
+      /Invalid Pairing Session JSON in .*session-1\.json/,
+    );
+  });
 });
 
 function exampleSession(): PairingSession {
