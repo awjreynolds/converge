@@ -79,7 +79,7 @@
   "scripts": {
     "build": "node ./scripts/build.mjs",
     "test": "vitest run --root ../.. clients/vscode/src --exclude clients/vscode/src/test/**",
-    "test:extension-host": "npm run build && node ./scripts/build-extension-host-tests.mjs && vscode-test --config ./.vscode-test.mjs --bail --fail-zero --forbid-only",
+    "test:extension-host": "npm run build && node ./scripts/build-extension-host-tests.mjs && node ./scripts/run-extension-host-tests.mjs",
     "package": "npm run build && vsce package --no-dependencies",
     "vscode:prepublish": "npm run build"
   },

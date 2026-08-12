@@ -3,8 +3,14 @@ import * as vscode from "vscode";
 
 const extensionId = "converge-dev.converge-vscode";
 
-suite("Converge extension public command surface", () => {
-  test("activates through the open-panel command and registers the session command", async () => {
+export async function run(): Promise<void> {
+  await activatesAndRegistersPublicCommands();
+  console.log("PASS open-panel activates the extension and registers public commands");
+  await handlesUnavailableAgentSafely();
+  console.log("PASS start-session handles an unavailable agent safely");
+}
+
+async function activatesAndRegistersPublicCommands(): Promise<void> {
     const extension = vscode.extensions.getExtension(extensionId);
     assert.ok(extension, `Expected ${extensionId} to be installed in the Extension Host`);
 
@@ -14,9 +20,9 @@ suite("Converge extension public command surface", () => {
     const commands = await vscode.commands.getCommands(true);
     assert.ok(commands.includes("converge.openPanel"));
     assert.ok(commands.includes("converge.startSession"));
-  });
+}
 
-  test("keeps the start-session command safe when the configured agent is unavailable", async () => {
+async function handlesUnavailableAgentSafely(): Promise<void> {
     const configuredAgent = vscode.workspace
       .getConfiguration("converge")
       .get<string>("codexPath");
@@ -31,5 +37,4 @@ suite("Converge extension public command surface", () => {
 
     const extension = vscode.extensions.getExtension(extensionId);
     assert.equal(extension?.isActive, true);
-  });
-});
+}

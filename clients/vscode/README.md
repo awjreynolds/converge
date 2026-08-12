@@ -17,7 +17,7 @@ The first client is a local desktop Node extension for a trusted, single-folder 
 
 ## Extension Host tests
 
-The integration suite downloads an isolated stable VS Code runtime, opens the minimal fixture
+The integration suite uses `@vscode/test-electron` directly to download the minimum supported VS Code 1.95 runtime, opens the minimal fixture
 workspace, and verifies the extension's public activation and command surface:
 
 ```sh
