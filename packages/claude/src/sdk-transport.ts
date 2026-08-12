@@ -1,4 +1,4 @@
-import { AsyncQueue } from "./async-queue.js";
+import { AsyncQueue } from "@converge/core";
 import type {
   ClaudeTransport,
   ClaudeTransportEvent,

@@ -13,7 +13,9 @@ export class AsyncQueue<T> implements AsyncIterable<T> {
   close(): void {
     if (this.#closed) return;
     this.#closed = true;
-    for (const waiter of this.#waiters.splice(0)) waiter({ done: true, value: undefined });
+    for (const waiter of this.#waiters.splice(0)) {
+      waiter({ done: true, value: undefined });
+    }
   }
 
   [Symbol.asyncIterator](): AsyncIterator<T> {

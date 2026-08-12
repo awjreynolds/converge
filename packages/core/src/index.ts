@@ -1,3 +1,4 @@
+export * from "./async-queue.js";
 export * from "./contracts.js";
 export * from "./coordinator.js";
 export * from "./json-file-store.js";

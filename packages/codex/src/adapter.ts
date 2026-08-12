@@ -1,11 +1,11 @@
 import {
   AgentRunCancelledError,
+  AsyncQueue,
   type AgentEvent,
   type AgentPort,
   type AgentRunRequest,
 } from "@converge/core";
 
-import { AsyncQueue } from "./async-queue.js";
 import { asRecord } from "./decoding.js";
 import {
   readApprovalRequest,
