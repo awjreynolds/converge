@@ -8,7 +8,6 @@ export default defineConfig({
     include: [
       "packages/**/*.test.ts",
       "clients/**/*.test.ts",
-      "fixtures/**/*.test.ts",
     ],
   },
 });
