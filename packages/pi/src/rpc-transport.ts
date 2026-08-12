@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
-import { AsyncQueue } from "@converge/core";
+import { AgentRunCancelledError, AsyncQueue } from "@converge/core";
 
 import {
   PI_APPROVAL_SENTINEL,
@@ -33,6 +33,12 @@ interface ActiveRun {
   pending: Map<string, PendingApproval>;
 }
 
+interface ActiveValidation {
+  cancelled: boolean;
+  controller: AbortController;
+  connection?: PiRpcConnection;
+}
+
 const execFileAsync = promisify(execFile);
 const VALIDATION_STATE_ID = "converge-validation-state";
 const VALIDATION_MODELS_ID = "converge-validation-models";
@@ -48,6 +54,7 @@ export class PiRpcTransport implements PiTransport {
   readonly #workspaceRoot: string;
   readonly #connectionFactory: PiRpcConnectionFactory;
   #active: ActiveRun | undefined;
+  #validation: ActiveValidation | undefined;
   #disposed = false;
 
   constructor(options: PiRpcTransportOptions) {
@@ -60,59 +67,78 @@ export class PiRpcTransport implements PiTransport {
 
   async validate(): Promise<void> {
     if (this.#disposed) throw new Error("Pi transport is disposed.");
-    let output: string;
+    if (this.#validation) throw new Error("Pi transport already has an active validation.");
+    const validation: ActiveValidation = { cancelled: false, controller: new AbortController() };
+    this.#validation = validation;
     try {
-      const result = await execFileAsync(this.#executablePath, ["--version"], { encoding: "utf8", shell: false });
-      output = `${result.stdout}${result.stderr}`.trim();
-    } catch (error) {
-      throw new Error(`Pi executable ${JSON.stringify(this.#executablePath)} could not be started: ${safeCause(error)}`);
-    }
-    const actual = /(?:^|\s)v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:\s|$)/.exec(output)?.[1];
-    if (actual !== this.#supportedCliVersion) {
-      throw new Error(`Unsupported Pi CLI version ${actual ?? JSON.stringify(output)}; Converge supports ${this.#supportedCliVersion}.`);
-    }
+      let output: string;
+      try {
+        const result = await execFileAsync(this.#executablePath, ["--version"], {
+          encoding: "utf8",
+          shell: false,
+          signal: validation.controller.signal,
+        });
+        output = `${result.stdout}${result.stderr}`.trim();
+      } catch (error) {
+        if (validation.cancelled) throw new AgentRunCancelledError("Pi validation was cancelled");
+        throw new Error(`Pi executable ${JSON.stringify(this.#executablePath)} could not be started: ${safeCause(error)}`);
+      }
+      if (validation.cancelled) throw new AgentRunCancelledError("Pi validation was cancelled");
+      const actual = /(?:^|\s)v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:\s|$)/.exec(output)?.[1];
+      if (actual !== this.#supportedCliVersion) {
+        throw new Error(`Unsupported Pi CLI version ${actual ?? JSON.stringify(output)}; Converge supports ${this.#supportedCliVersion}.`);
+      }
 
-    let connection: PiRpcConnection | undefined;
-    try {
-      connection = await this.#connectionFactory({
-        executablePath: this.#executablePath,
-        args: validationArguments(),
-        cwd: this.#workspaceRoot,
-      });
-      await connection.send({ id: VALIDATION_STATE_ID, type: "get_state" });
-      await connection.send({ id: VALIDATION_MODELS_ID, type: "get_available_models" });
-      let activeModel: Record<string, unknown> | undefined;
-      let availableModels: unknown[] | undefined;
-      let stateReceived = false;
-      for await (const message of connection.messages) {
-        const record = asRecord(message);
-        if (!record) continue;
-        if (record.type === "converge_transport_error") throw new Error(String(record.error));
-        if (record.id === VALIDATION_STATE_ID) {
-          ensureSuccessfulResponse(record, "get_state");
-          activeModel = asRecord(asRecord(record.data)?.model);
-          stateReceived = true;
+      try {
+        const connection = await this.#connectionFactory({
+          executablePath: this.#executablePath,
+          args: validationArguments(),
+          cwd: this.#workspaceRoot,
+        });
+        validation.connection = connection;
+        if (validation.cancelled) throw new AgentRunCancelledError("Pi validation was cancelled");
+        await connection.send({ id: VALIDATION_STATE_ID, type: "get_state" });
+        await connection.send({ id: VALIDATION_MODELS_ID, type: "get_available_models" });
+        let activeModel: Record<string, unknown> | undefined;
+        let availableModels: unknown[] | undefined;
+        let stateReceived = false;
+        for await (const message of connection.messages) {
+          if (validation.cancelled) throw new AgentRunCancelledError("Pi validation was cancelled");
+          const record = asRecord(message);
+          if (!record) continue;
+          if (record.type === "converge_transport_error") throw new Error(String(record.error));
+          if (record.id === VALIDATION_STATE_ID) {
+            ensureSuccessfulResponse(record, "get_state");
+            activeModel = asRecord(asRecord(record.data)?.model);
+            stateReceived = true;
+          }
+          if (record.id === VALIDATION_MODELS_ID) {
+            ensureSuccessfulResponse(record, "get_available_models");
+            const models = asRecord(record.data)?.models;
+            availableModels = Array.isArray(models) ? models : undefined;
+          }
+          if (stateReceived && availableModels !== undefined) break;
         }
-        if (record.id === VALIDATION_MODELS_ID) {
-          ensureSuccessfulResponse(record, "get_available_models");
-          const models = asRecord(record.data)?.models;
-          availableModels = Array.isArray(models) ? models : undefined;
+        if (validation.cancelled) throw new AgentRunCancelledError("Pi validation was cancelled");
+        if (!activeModel || typeof activeModel.id !== "string" || typeof activeModel.provider !== "string") {
+          throw new Error("Pi authentication is not configured for its selected model.");
         }
-        if (stateReceived && availableModels !== undefined) break;
+        const authenticated = availableModels?.some((model) => {
+          const candidate = asRecord(model);
+          return candidate?.id === activeModel?.id && candidate?.provider === activeModel.provider;
+        });
+        if (!authenticated) throw new Error("Pi authentication is not available for its selected model.");
+      } catch (error) {
+        if (validation.cancelled || error instanceof AgentRunCancelledError) {
+          throw new AgentRunCancelledError("Pi validation was cancelled");
+        }
+        if (/^Pi authentication/.test(error instanceof Error ? error.message : "")) throw error;
+        throw new Error(`Pi authentication preflight failed: ${safeCause(error)}`);
+      } finally {
+        await validation.connection?.close();
       }
-      if (!activeModel || typeof activeModel.id !== "string" || typeof activeModel.provider !== "string") {
-        throw new Error("Pi authentication is not configured for its selected model.");
-      }
-      const authenticated = availableModels?.some((model) => {
-        const candidate = asRecord(model);
-        return candidate?.id === activeModel?.id && candidate?.provider === activeModel.provider;
-      });
-      if (!authenticated) throw new Error("Pi authentication is not available for its selected model.");
-    } catch (error) {
-      if (/^Pi authentication/.test(error instanceof Error ? error.message : "")) throw error;
-      throw new Error(`Pi authentication preflight failed: ${safeCause(error)}`);
     } finally {
-      await connection?.close();
+      if (this.#validation === validation) this.#validation = undefined;
     }
   }
 
@@ -131,6 +157,12 @@ export class PiRpcTransport implements PiTransport {
   }
 
   async cancel(): Promise<void> {
+    const validation = this.#validation;
+    if (validation && !validation.cancelled) {
+      validation.cancelled = true;
+      validation.controller.abort();
+      await validation.connection?.close();
+    }
     const active = this.#active;
     if (!active || active.cancelled) return;
     active.cancelled = true;

@@ -1,4 +1,4 @@
-import { AsyncQueue } from "@converge/core";
+import { AgentRunCancelledError, AsyncQueue } from "@converge/core";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -89,6 +89,31 @@ describe("PiRpcTransport", () => {
     });
     await expect(transport.validate()).rejects.toThrow(`Unsupported Pi CLI version ${process.versions.node}; Converge supports 0.84.1`);
     expect(launched).toBe(false);
+  });
+
+  it("cancels authentication preflight while its RPC process is starting", async () => {
+    let releaseConnection!: (connection: PiRpcConnection) => void;
+    let reportStarted!: () => void;
+    const connectionPromise = new Promise<PiRpcConnection>((resolve) => { releaseConnection = resolve; });
+    const started = new Promise<void>((resolve) => { reportStarted = resolve; });
+    const connection = new ReactiveConnection(() => {});
+    const transport = new PiRpcTransport({
+      gateExtensionPath: "/converge/gate.js",
+      executablePath: process.execPath,
+      supportedCliVersion: process.versions.node,
+      connectionFactory: async () => {
+        reportStarted();
+        return connectionPromise;
+      },
+    });
+
+    const validation = transport.validate();
+    await started;
+    await transport.cancel();
+    releaseConnection(connection);
+
+    await expect(validation).rejects.toBeInstanceOf(AgentRunCancelledError);
+    expect(connection.closeCount).toBe(1);
   });
 
   it("launches a restricted read-only RPC process and waits for agent_settled", async () => {
