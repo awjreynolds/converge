@@ -178,9 +178,14 @@ export async function runRevokedSessionWalkthrough(
 
 export const fakeWalkthroughProvider: RevokedSessionWalkthroughProvider = {
   providerId: "fake-agent",
-  createAgent: ({ workspaceRoot, testRuns }) =>
-    new RevokedSessionFakeAgent(workspaceRoot, testRuns),
+  createAgent: (context) => createRevokedSessionScenarioAgent(context),
 };
+
+export function createRevokedSessionScenarioAgent(
+  context: RevokedSessionWalkthroughAgentContext,
+): AgentPort {
+  return new RevokedSessionFakeAgent(context.workspaceRoot, context.testRuns);
+}
 
 export function formatWalkthrough(result: RevokedSessionWalkthroughResult): string {
   return [
@@ -263,6 +268,8 @@ class RevokedSessionFakeAgent implements AgentPort {
     private readonly workspaceRoot: string,
     private readonly testRuns: WalkthroughTestRun[],
   ) {}
+
+  async validate(): Promise<void> {}
 
   async *run(request: AgentRunRequest): AsyncIterable<AgentEvent> {
     switch (request.phase) {

@@ -19,7 +19,7 @@
     "audit": "npm audit --audit-level=moderate",
     "licenses:check": "node ./scripts/check-licenses.mjs",
     "test": "vitest run",
-    "test:e2e": "vitest run packages/integration/src/revoked-session-walkthrough.test.ts",
+    "test:e2e": "vitest run packages/integration/src",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "verify": "npm run typecheck && npm test && npm run licenses:check && npm run build"
