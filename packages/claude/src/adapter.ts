@@ -1,5 +1,6 @@
 import {
   AgentRunCancelledError,
+  decodeStructuredAgentEvent,
   type AgentEvent,
   type AgentPort,
   type AgentRunRequest,
@@ -11,7 +12,7 @@ import { buildClaudePrompt } from "./prompts.js";
 import type { ClaudeTransport } from "./protocol.js";
 import { TESTED_CLAUDE_CLI_VERSION } from "./protocol.js";
 import { ClaudeSdkTransport } from "./sdk-transport.js";
-import { claudeOutputSchemaFor, parseClaudeStructuredResult } from "./structured-output.js";
+import { claudeOutputSchemaFor } from "./structured-output.js";
 
 export interface ClaudeAgentAdapterOptions {
   transport?: ClaudeTransport;
@@ -72,7 +73,7 @@ export class ClaudeAgentAdapter implements AgentPort {
     })) {
       if (event.type === "structured-result") {
         try {
-          yield parseClaudeStructuredResult(event.value);
+          yield decodeStructuredAgentEvent(event.value, { source: "Claude" });
         } catch (error) {
           yield {
             type: "error",
