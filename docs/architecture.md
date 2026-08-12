@@ -18,7 +18,7 @@ Each investigation, discussion, revision, implementation, verification, summary,
 
 Pairing Session persistence satisfies `PairingSessionStore`. The first adapter writes transparent repository-local JSON beneath `.converge/`. State is saved after each accepted transition so extension restart does not make the chat transcript or current filesystem the source of truth.
 
-Codex thread identifiers may be persisted. Credentials and execution approvals are not.
+Provider-neutral agent thread identifiers may be persisted. Credentials and execution approvals are not.
 
 ## VS Code host
 

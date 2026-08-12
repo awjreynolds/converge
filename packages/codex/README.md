@@ -18,7 +18,7 @@ The default executable is `codex` from `PATH`. The adapter currently requires
 was generated and tested. A caller may explicitly select another pinned version
 with `supportedCliVersion` while validating an updated app-server protocol.
 
-Persist every emitted `thread-started` ID in the `PairingSession.codexThreadId`
+Persist every emitted `thread-started` ID in the provider-neutral `PairingSession.agentThreadId`
 field before the next phase. Command and file permission requests are emitted as
 `execution-approval-requested`; answer them independently of Converge design
 approval with `respondToExecutionApproval`. Call `cancel()` to interrupt an active

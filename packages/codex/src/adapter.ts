@@ -32,6 +32,8 @@ interface ActiveRun {
 
 interface PendingApproval {
   protocolId: JsonRpcId;
+  kind: "command" | "file" | "permissions";
+  requestedPermissions?: unknown;
 }
 
 class AsyncQueue<T> implements AsyncIterable<T> {
@@ -91,7 +93,7 @@ export class CodexAppServerAdapter implements AgentPort {
     }
     await this.#connect();
 
-    const threadId = request.session.codexThreadId
+    const threadId = request.session.agentThreadId
       ? await this.#resumeThread(request)
       : await this.#startThread(request);
     const queue = new AsyncQueue<AgentEvent>();
@@ -103,7 +105,7 @@ export class CodexAppServerAdapter implements AgentPort {
     };
     this.#activeRun = active;
 
-    if (!request.session.codexThreadId) {
+    if (!request.session.agentThreadId) {
       queue.push({ type: "thread-started", threadId });
     }
 
@@ -164,10 +166,20 @@ export class CodexAppServerAdapter implements AgentPort {
     const approval = this.#approvals.get(requestId);
     if (!approval) throw new Error(`Unknown or already resolved Codex execution approval ${requestId}.`);
     this.#approvals.delete(requestId);
-    await this.#transport.send({
-      id: approval.protocolId,
-      result: { decision: decision === "approved" ? "accept" : "decline" },
-    });
+    await this.#transport.send(
+      approval.kind === "permissions"
+        ? {
+            id: approval.protocolId,
+            result: {
+              permissions: decision === "approved" ? approval.requestedPermissions : {},
+              scope: "turn",
+            },
+          }
+        : {
+            id: approval.protocolId,
+            result: { decision: decision === "approved" ? "accept" : "decline" },
+          },
+    );
   }
 
   async #connect(): Promise<void> {
@@ -205,7 +217,7 @@ export class CodexAppServerAdapter implements AgentPort {
   }
 
   async #resumeThread(request: AgentRunRequest): Promise<string> {
-    const requestedId = request.session.codexThreadId;
+    const requestedId = request.session.agentThreadId;
     if (!requestedId) throw new Error("Cannot resume a Codex thread without an id.");
     const result = await this.#request("thread/resume", {
       threadId: requestedId,
@@ -263,29 +275,53 @@ export class CodexAppServerAdapter implements AgentPort {
   #handleServerRequest(message: { id: JsonRpcId; method: string; params?: unknown }): void {
     const active = this.#activeRun;
     const params = asRecord(message.params);
-    if (!active || params?.threadId !== active.threadId) return;
-    const kind =
+    if (!active || params?.threadId !== active.threadId) {
+      void this.#rejectServerRequest(message.id, message.method);
+      return;
+    }
+    const kind: PendingApproval["kind"] | undefined =
       message.method === "item/commandExecution/requestApproval"
         ? "command"
         : message.method === "item/fileChange/requestApproval"
           ? "file"
+          : message.method === "item/permissions/requestApproval"
+            ? "permissions"
           : undefined;
-    if (!kind) return;
+    if (!kind) {
+      void this.#rejectServerRequest(message.id, message.method);
+      return;
+    }
     const requestId = String(message.id);
-    this.#approvals.set(requestId, { protocolId: message.id });
+    this.#approvals.set(requestId, {
+      protocolId: message.id,
+      kind,
+      ...(kind === "permissions" ? { requestedPermissions: params.permissions } : {}),
+    });
     const operation =
       kind === "command"
         ? typeof params.command === "string"
           ? params.command
           : "Run a command"
-        : typeof params.grantRoot === "string"
+        : kind === "file" && typeof params.grantRoot === "string"
           ? `Write files under ${params.grantRoot}`
-          : "Modify workspace files";
+          : kind === "file"
+            ? "Modify workspace files"
+            : describePermissions(params.permissions);
     active.queue.push({
       type: "execution-approval-requested",
       requestId,
       operation,
       ...(typeof params.reason === "string" ? { reason: params.reason } : {}),
+    });
+  }
+
+  async #rejectServerRequest(id: JsonRpcId, method: string): Promise<void> {
+    await this.#transport.send({
+      id,
+      error: {
+        code: -32601,
+        message: `Converge does not support app-server request ${method} in this phase.`,
+      },
     });
   }
 
@@ -363,7 +399,7 @@ export class CodexAppServerAdapter implements AgentPort {
         active.queue.push(
           event.type === "proposal" &&
             event.changeId === undefined &&
-            (active.phase === "discuss" || active.phase === "revise") &&
+            active.phase === "revise" &&
             active.changeId !== undefined
             ? { ...event, changeId: active.changeId }
             : event,
@@ -382,6 +418,19 @@ export class CodexAppServerAdapter implements AgentPort {
   }
 }
 
+function describePermissions(value: unknown): string {
+  const permissions = asRecord(value);
+  const requested: string[] = [];
+  const network = asRecord(permissions?.network);
+  if (network?.enabled === true) requested.push("network access");
+  const fileSystem = asRecord(permissions?.fileSystem);
+  const read = Array.isArray(fileSystem?.read) ? fileSystem.read.filter((path) => typeof path === "string") : [];
+  const write = Array.isArray(fileSystem?.write) ? fileSystem.write.filter((path) => typeof path === "string") : [];
+  if (read.length > 0) requested.push(`read access to ${read.join(", ")}`);
+  if (write.length > 0) requested.push(`write access to ${write.join(", ")}`);
+  return requested.length > 0 ? `Grant ${requested.join(" and ")}` : "Grant additional execution permissions";
+}
+
 function buildPrompt(request: AgentRunRequest): string {
   const context = {
     phase: request.phase,
@@ -391,24 +440,69 @@ function buildPrompt(request: AgentRunRequest): string {
       ? request.session.changes.find((change) => change.id === request.changeId)
       : undefined,
     humanMessage: request.humanMessage,
+    resolvedChanges: request.session.changes
+      .filter((change) => change.status === "verified" || change.status === "rejected")
+      .map((change) => ({
+        id: change.id,
+        status: change.status,
+        revision: change.revisions.find(
+          (revision) => revision.revision === change.currentRevision,
+        ),
+      })),
   };
   return [
     `Complete exactly one bounded Converge ${request.phase} phase.`,
+    phaseInstruction(request.phase),
     "Return only JSON matching the supplied output schema. Do not wrap it in Markdown.",
     JSON.stringify(context),
   ].join("\n\n");
 }
 
+function phaseInstruction(phase: AgentRunRequest["phase"]): string {
+  switch (phase) {
+    case "investigate":
+      return "Propose the next meaningful Change Unit. If all specification work is implemented and verified, return the final summary and Understanding Check instead.";
+    case "discuss":
+      return "Answer the engineer's question concisely without changing the proposal. A redesign requires Redirect, not Discuss.";
+    case "revise":
+      return "Return a revised proposal that preserves the supplied Change Unit identity and addresses the engineer's redirect.";
+    case "implement":
+      return "Apply only the approved Change Unit and report concrete file, command, and test evidence.";
+    case "verify":
+      return "Run the verification appropriate to this Change Unit and report passed, failed, or expected-failure evidence accurately.";
+    case "summarize":
+      return "Summarize the verified resulting system and ask one targeted Understanding Check question.";
+    case "assess-understanding":
+      return "Compare the engineer's answer with the implemented system and report aligned or mismatch with a concise explanation.";
+  }
+}
+
 function outputSchemaFor(phase: AgentRunRequest["phase"]): Record<string, unknown> {
   const common = { type: "object", additionalProperties: false };
-  if (phase === "investigate" || phase === "discuss" || phase === "revise") {
+  if (phase === "investigate") {
     return {
       ...common,
-      required: ["type", "proposal"],
+      required: ["type", "proposal", "summary", "concepts", "question"],
       properties: {
-        type: { const: "proposal" },
+        type: { enum: ["proposal", "summary"] },
+        proposal: { anyOf: [revisionSchema(), { type: "null" }] },
+        summary: { type: ["string", "null"] },
+        concepts: { type: "array", items: { type: "string" } },
+        question: { type: ["string", "null"] },
+      },
+    };
+  }
+  if (phase === "revise") {
+    return proposalOutputSchema();
+  }
+  if (phase === "discuss") {
+    return {
+      ...common,
+      required: ["type", "changeId", "message"],
+      properties: {
+        type: { const: "discussion" },
         changeId: { type: "string" },
-        proposal: revisionSchema(),
+        message: { type: "string" },
       },
     };
   }
@@ -437,16 +531,7 @@ function outputSchemaFor(phase: AgentRunRequest["phase"]): Record<string, unknow
     };
   }
   if (phase === "summarize") {
-    return {
-      ...common,
-      required: ["type", "summary", "concepts", "question"],
-      properties: {
-        type: { const: "summary" },
-        summary: { type: "string" },
-        concepts: { type: "array", items: { type: "string" } },
-        question: { type: "string" },
-      },
-    };
+    return summaryOutputSchema();
   }
   return {
     ...common,
@@ -455,6 +540,33 @@ function outputSchemaFor(phase: AgentRunRequest["phase"]): Record<string, unknow
       type: { const: "understanding-assessment" },
       assessment: { enum: ["aligned", "mismatch"] },
       explanation: { type: "string" },
+    },
+  };
+}
+
+function proposalOutputSchema(): Record<string, unknown> {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["type", "proposal"],
+    properties: {
+      type: { const: "proposal" },
+      changeId: { type: "string" },
+      proposal: revisionSchema(),
+    },
+  };
+}
+
+function summaryOutputSchema(): Record<string, unknown> {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["type", "summary", "concepts", "question"],
+    properties: {
+      type: { const: "summary" },
+      summary: { type: "string" },
+      concepts: { type: "array", items: { type: "string" } },
+      question: { type: "string" },
     },
   };
 }
@@ -561,6 +673,12 @@ function parseAgentEvent(raw: string | undefined): AgentEvent {
         type: "proposal",
         ...(typeof record.changeId === "string" ? { changeId: record.changeId } : {}),
         proposal: parseProposal(record.proposal),
+      };
+    case "discussion":
+      return {
+        type: "discussion",
+        changeId: requiredString(record, "changeId"),
+        message: requiredString(record, "message"),
       };
     case "implementation":
       return {

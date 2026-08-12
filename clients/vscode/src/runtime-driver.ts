@@ -104,8 +104,9 @@ export class ConvergeSessionDriver implements SessionDriver {
           approvalPolicy: "workspace-write",
         });
       case "verified":
+      case "rejected":
         return this.#coordinator.runAgent(session.id, {
-          phase: "summarize",
+          phase: "investigate",
           approvalPolicy: "read-only",
         });
       case "discussing":

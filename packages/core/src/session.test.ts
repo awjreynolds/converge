@@ -199,6 +199,7 @@ describe("Pairing Session", () => {
       currentRevision: 1,
       revisions: [{ title: "Add a coordinator" }],
       humanFeedback: [],
+      discussionReplies: [],
     });
     expect(session.changes).toHaveLength(1);
     expect(session.changes[0]).toMatchObject({
@@ -361,6 +362,7 @@ function verifiedSession(): PairingSession {
           },
         ],
         humanFeedback: [],
+        discussionReplies: [],
         dependsOn: [],
       },
     ],

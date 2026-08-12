@@ -189,7 +189,10 @@ describe("CodexAppServerAdapter", () => {
         approvalPolicy: "on-request",
         approvalsReviewer: "user",
         sandboxPolicy: { type: "readOnly", networkAccess: false },
-        outputSchema: { properties: { type: { const: "proposal" } } },
+        outputSchema: {
+          type: "object",
+          properties: { type: { enum: ["proposal", "summary"] } },
+        },
       },
     });
   });
@@ -222,7 +225,7 @@ describe("CodexAppServerAdapter", () => {
         phase: "implement",
         approvalPolicy: "workspace-write",
         changeId: "change-1",
-        session: session({ codexThreadId: "thread-existing" }),
+        session: session({ agentThreadId: "thread-existing" }),
       }),
     )[Symbol.asyncIterator]();
 
@@ -291,6 +294,120 @@ describe("CodexAppServerAdapter", () => {
       }
     }).rejects.toThrow("Unsupported Codex CLI version 0.146.0");
     expect(transport.sent).toEqual([]);
+  });
+
+  it("routes network and filesystem permission profiles through the separate approval seam", async () => {
+    const transport = new ScriptedTransport(undefined, (message, fake) => {
+      if (!("id" in message) || !("method" in message)) return;
+      if (message.method === "initialize") fake.push({ id: message.id, result: {} });
+      if (message.method === "thread/start") {
+        fake.push({ id: message.id, result: { thread: { id: "thread-permissions" } } });
+      }
+      if (message.method === "turn/start") {
+        fake.push({ id: message.id, result: { turn: { id: "turn-permissions" } } });
+        fake.push({
+          id: "permission-1",
+          method: "item/permissions/requestApproval",
+          params: {
+            threadId: "thread-permissions",
+            turnId: "turn-permissions",
+            reason: "Install and update the fixture",
+            permissions: {
+              network: { enabled: true },
+              fileSystem: { read: ["/shared"], write: ["/fixture"] },
+            },
+          },
+        });
+      }
+      if (message.method === "turn/interrupt") {
+        fake.push({ id: message.id, result: {} });
+        fake.push({
+          method: "turn/completed",
+          params: {
+            threadId: "thread-permissions",
+            turn: { id: "turn-permissions", status: "interrupted" },
+          },
+        });
+      }
+    });
+    const adapter = new CodexAppServerAdapter({ transport });
+    const iterator = adapter.run(request())[Symbol.asyncIterator]();
+
+    expect(await iterator.next()).toEqual({
+      done: false,
+      value: { type: "thread-started", threadId: "thread-permissions" },
+    });
+    expect(await iterator.next()).toEqual({
+      done: false,
+      value: {
+        type: "execution-approval-requested",
+        requestId: "permission-1",
+        operation: "Grant network access and read access to /shared and write access to /fixture",
+        reason: "Install and update the fixture",
+      },
+    });
+
+    await adapter.respondToExecutionApproval("permission-1", "approved");
+    expect(transport.sent.at(-1)).toEqual({
+      id: "permission-1",
+      result: {
+        permissions: {
+          network: { enabled: true },
+          fileSystem: { read: ["/shared"], write: ["/fixture"] },
+        },
+        scope: "turn",
+      },
+    });
+    await adapter.dispose();
+  });
+
+  it("rejects unsupported blocking server requests instead of leaving Codex hanging", async () => {
+    const transport = new ScriptedTransport(undefined, (message, fake) => {
+      if (!("id" in message) || !("method" in message)) return;
+      if (message.method === "initialize") fake.push({ id: message.id, result: {} });
+      if (message.method === "thread/start") {
+        fake.push({ id: message.id, result: { thread: { id: "thread-unsupported" } } });
+      }
+      if (message.method === "turn/start") {
+        fake.push({ id: message.id, result: { turn: { id: "turn-unsupported" } } });
+        fake.push({
+          id: "question-1",
+          method: "item/tool/requestUserInput",
+          params: {
+            threadId: "thread-unsupported",
+            turnId: "turn-unsupported",
+            questions: [],
+            isBlocking: true,
+          },
+        });
+      }
+      if (message.method === "turn/interrupt") {
+        fake.push({ id: message.id, result: {} });
+        fake.push({
+          method: "turn/completed",
+          params: {
+            threadId: "thread-unsupported",
+            turn: { id: "turn-unsupported", status: "interrupted" },
+          },
+        });
+      }
+    });
+    const adapter = new CodexAppServerAdapter({ transport });
+    const iterator = adapter.run(request())[Symbol.asyncIterator]();
+    expect(await iterator.next()).toEqual({
+      done: false,
+      value: { type: "thread-started", threadId: "thread-unsupported" },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(transport.sent).toContainEqual({
+      id: "question-1",
+      error: {
+        code: -32601,
+        message:
+          "Converge does not support app-server request item/tool/requestUserInput in this phase.",
+      },
+    });
+    await adapter.dispose();
   });
 
   it("interrupts the active turn when cancelled", async () => {
@@ -395,6 +512,27 @@ describe("CodexAppServerAdapter", () => {
     expect(revised.events.at(-1)).toMatchObject({
       type: "proposal",
       changeId: "change-1",
+    });
+  });
+
+  it("maps Discuss to an answer attached to the unchanged Change Unit", async () => {
+    const discussion = await runCompletedTurn(
+      {
+        type: "discussion",
+        changeId: "change-1",
+        message: "SessionService owns refresh behavior and already receives SessionLookup.",
+      },
+      {
+        phase: "discuss",
+        changeId: "change-1",
+        humanMessage: "Why does SessionService own this check?",
+      },
+    );
+
+    expect(discussion.events.at(-1)).toEqual({
+      type: "discussion",
+      changeId: "change-1",
+      message: "SessionService owns refresh behavior and already receives SessionLookup.",
     });
   });
 

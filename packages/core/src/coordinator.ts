@@ -94,10 +94,7 @@ export class PairingSessionCoordinator {
           changeId: requireChangeId(phase, changeId),
         });
       case "discuss":
-        return this.transition(session, {
-          type: "revision-started",
-          changeId: requireChangeId(phase, changeId),
-        });
+        return session;
       case "summarize":
       case "assess-understanding":
         return session;
@@ -119,6 +116,12 @@ export class PairingSessionCoordinator {
           type: "change-proposed",
           ...(event.changeId === undefined ? {} : { changeId: event.changeId }),
           proposal: event.proposal,
+        });
+      case "discussion":
+        return this.transition(session, {
+          type: "discussion-answered",
+          changeId: event.changeId,
+          message: event.message,
         });
       case "implementation":
         return this.transition(session, {

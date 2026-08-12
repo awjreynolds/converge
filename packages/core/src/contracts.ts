@@ -41,6 +41,11 @@ export interface HumanFeedback {
   recordedAt: string;
 }
 
+export interface DiscussionReply {
+  message: string;
+  recordedAt: string;
+}
+
 export interface ChangeUnitRevision {
   revision: number;
   title: string;
@@ -62,6 +67,7 @@ export interface ChangeUnit {
   currentRevision: number;
   revisions: ChangeUnitRevision[];
   humanFeedback: HumanFeedback[];
+  discussionReplies: DiscussionReply[];
   dependsOn: ChangeUnitId[];
 }
 
@@ -90,7 +96,7 @@ export interface PairingSession {
   status: PairingSessionStatus;
   createdAt: string;
   updatedAt: string;
-  codexThreadId?: string;
+  agentThreadId?: string;
   activeChangeId?: ChangeUnitId;
   changes: ChangeUnit[];
   progress: string[];
@@ -105,6 +111,7 @@ export type SessionAction =
   | { type: "progress-reported"; message: string }
   | { type: "change-proposed"; changeId?: string; proposal: Omit<ChangeUnitRevision, "revision" | "proposedAt"> }
   | { type: "feedback-recorded"; changeId: string; feedback: Omit<HumanFeedback, "recordedAt"> }
+  | { type: "discussion-answered"; changeId: string; message: string }
   | { type: "revision-started"; changeId: string }
   | { type: "implementation-started"; changeId: string }
   | { type: "implementation-reported"; changeId: string; evidence: Evidence[]; tests?: TestEvidence[] }
@@ -130,6 +137,7 @@ export type AgentEvent =
   | { type: "progress"; message: string }
   | { type: "thread-started"; threadId: string }
   | { type: "proposal"; changeId?: string; proposal: Omit<ChangeUnitRevision, "revision" | "proposedAt"> }
+  | { type: "discussion"; changeId: string; message: string }
   | { type: "implementation"; changeId: string; evidence: Evidence[]; tests?: TestEvidence[] }
   | { type: "verification"; changeId: string; tests: TestEvidence[]; evidence?: Evidence[] }
   | { type: "summary"; summary: string; concepts: string[]; question: string }

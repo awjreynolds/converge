@@ -24,8 +24,8 @@ The test must fail because `SessionService.refresh()` returns `new-token` for a 
 6. Redirect any proposal that bypasses `SessionLookup`; require the existing persistence seam to remain intact.
 7. Approve the revised Change Unit, then choose **Apply approved change**. Treat any Codex command or file approval as a separate execution decision.
 8. Inspect the resulting files with **View Diff** in VS Code.
-9. Choose **Run verification**. The behavioural test must pass.
-10. Choose **Complete implementation**, review the final system model, and answer the targeted Understanding Check.
+9. Choose **Run verification**. A test-only Change Unit may report **expected failure**; the implementation Change Unit must pass.
+10. Choose **Next Change Unit** after each verified or rejected unit. Codex either proposes the next meaningful decision or, once every requirement is verified, presents the final system model and Understanding Check.
 
 ## Expected result
 

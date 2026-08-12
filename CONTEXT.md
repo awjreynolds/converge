@@ -22,7 +22,11 @@ _Avoid_: Comment, review
 
 **Redirect**:
 A response that supplies corrective direction and requires a proposed Change Unit to be revised while preserving its causal history.
-_Avoid_: Reject, edit request
+_Avoid_: Edit request, using Reject when revision is intended
+
+**Reject**:
+A response that declines a proposed Change Unit without asking for a revision; the Pairing Session returns to investigation for a different direction or completion.
+_Avoid_: Redirect
 
 **Understanding Check**:
 The final alignment step that compares the engineer's mental model, the agent's account, and the implemented system before a Pairing Session is complete.

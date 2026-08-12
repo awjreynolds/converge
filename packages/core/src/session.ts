@@ -57,10 +57,10 @@ export function applySessionAction(
       if (session.status === "converged") {
         throw invalid(action.type, "a converged Pairing Session is terminal");
       }
-      if (session.codexThreadId !== undefined && session.codexThreadId !== action.threadId) {
-        throw invalid(action.type, `agent thread is already ${session.codexThreadId}`);
+      if (session.agentThreadId !== undefined && session.agentThreadId !== action.threadId) {
+        throw invalid(action.type, `agent thread is already ${session.agentThreadId}`);
       }
-      return { ...session, codexThreadId: action.threadId, updatedAt: dependencies.clock.now() };
+      return { ...session, agentThreadId: action.threadId, updatedAt: dependencies.clock.now() };
 
     case "progress-reported":
       if (session.status === "converged") {
@@ -106,6 +106,7 @@ export function applySessionAction(
         currentRevision: 1,
         revisions: [{ ...action.proposal, revision: 1, proposedAt: updatedAt }],
         humanFeedback: [],
+        discussionReplies: [],
         dependsOn: [],
       };
       return {
@@ -115,6 +116,27 @@ export function applySessionAction(
         activeChangeId: changeId,
         changes: [...session.changes, change],
       };
+    }
+
+    case "discussion-answered": {
+      const change = getChange(session, action.changeId, action.type);
+      requireChangeStatus(change, action.type, ["discussing"]);
+      if (action.message.trim().length === 0) {
+        throw invalid(action.type, "a discussion answer is required");
+      }
+      const updatedAt = dependencies.clock.now();
+      return replaceChange(
+        session,
+        {
+          ...change,
+          status: "proposed",
+          discussionReplies: [
+            ...change.discussionReplies,
+            { message: action.message, recordedAt: updatedAt },
+          ],
+        },
+        { status: "awaiting-human", updatedAt },
+      );
     }
 
     case "feedback-recorded": {
@@ -193,7 +215,11 @@ export function applySessionAction(
         evidence: [...revision.evidence, ...(action.evidence ?? [])],
         tests: [...revision.tests, ...action.tests],
       };
-      const passed = action.tests.length > 0 && action.tests.every((test) => test.outcome === "passed");
+      const passed =
+        action.tests.length > 0 &&
+        action.tests.every(
+          (test) => test.outcome === "passed" || test.outcome === "expected-failure",
+        );
       return replaceChange(
         session,
         { ...change, status: passed ? "verified" : "implemented", revisions: replaceCurrentRevision(change, updatedRevision) },

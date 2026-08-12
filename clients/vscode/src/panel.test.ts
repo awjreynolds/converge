@@ -30,6 +30,7 @@ const session: PairingSession = {
           recordedAt: "2026-08-12T09:00:30.000Z",
         },
       ],
+      discussionReplies: [],
       revisions: [
         {
           revision: 1,
@@ -77,6 +78,7 @@ const session: PairingSession = {
       currentRevision: 1,
       dependsOn: [],
       humanFeedback: [],
+      discussionReplies: [],
       revisions: [
         {
           revision: 1,
@@ -196,6 +198,27 @@ describe("renderReasoningPanel", () => {
 
     expect(html).toContain("Understanding Check");
     expect(html).toContain("Where is revocation enforced?");
+    expect(html).toContain("data-action=\"answer-understanding\"");
+    expect(html).not.toContain("data-action=\"confirm-convergence\"");
+  });
+
+  it("keeps the Understanding Check interactive after a mismatch", () => {
+    const mismatched: PairingSession = {
+      ...session,
+      status: "understanding",
+      finalSummary: "Revocation is checked before refresh-token issuance.",
+      understandingCheck: {
+        concepts: ["SessionService owns refresh validation"],
+        question: "Where is revocation enforced?",
+        answer: "The repository enforces it.",
+        assessment: "mismatch",
+        explanation: "SessionService, not the repository, owns the check.",
+      },
+    };
+
+    const html = renderReasoningPanel(snapshot({ session: mismatched }));
+
+    expect(html).toContain("Recheck understanding");
     expect(html).toContain("data-action=\"answer-understanding\"");
     expect(html).not.toContain("data-action=\"confirm-convergence\"");
   });

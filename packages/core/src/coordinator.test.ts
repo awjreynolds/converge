@@ -71,7 +71,7 @@ describe("PairingSessionCoordinator", () => {
       "investigating",
       "awaiting-human",
     ]);
-    expect(store.saves[2]?.codexThreadId).toBe("codex-thread-1");
+    expect(store.saves[2]?.agentThreadId).toBe("codex-thread-1");
     expect(store.saves[3]?.progress).toEqual(["Found the revocation lookup"]);
     expect(result.changes[0]?.status).toBe("proposed");
     expect(approvals).toEqual(["exec-1"]);

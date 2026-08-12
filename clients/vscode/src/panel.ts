@@ -191,6 +191,9 @@ function renderChange(change: ChangeUnit, snapshot: PanelSnapshot): string {
   const feedback = change.humanFeedback.length
     ? `<section><h4>Discussion</h4>${change.humanFeedback.map((item) => `<blockquote><strong>${escapeText(item.decision)}</strong>${item.message ? ` — ${escapeText(item.message)}` : ""}</blockquote>`).join("")}</section>`
     : "";
+  const discussionReplies = change.discussionReplies.length
+    ? `<section><h4>Agent replies</h4>${change.discussionReplies.map((reply) => `<blockquote>${escapeText(reply.message)}</blockquote>`).join("")}</section>`
+    : "";
   const revisionHistory = history.length
     ? `<details class="revision-history"><summary>Earlier revisions (${history.length})</summary>${history.map((revision) => `<article><strong>${escapeText(revision.title)}</strong><p>${escapeText(revision.rationale)}</p></article>`).join("")}</details>`
     : "";
@@ -202,8 +205,8 @@ function renderChange(change: ChangeUnit, snapshot: PanelSnapshot): string {
     ${current.architecturalImpact ? `<section><h4>Architecture</h4><p>${escapeText(current.architecturalImpact)}</p></section>` : ""}
     ${current.risks.length ? `<section><h4>Risk</h4><ul>${current.risks.map((risk) => `<li>${escapeText(risk)}</li>`).join("")}</ul></section>` : ""}
     ${fileButtons ? `<section><h4>Scope</h4><div class="file-list">${fileButtons}</div></section>` : ""}
-    ${evidence}${tests}${visualisations}${feedback}${revisionHistory}
-    ${decisionStatuses.has(change.status) ? `<label class="feedback-label" for="feedback-${escapeAttribute(change.id)}">Discuss or redirect</label><textarea id="feedback-${escapeAttribute(change.id)}" data-feedback-for="${escapeAttribute(change.id)}" rows="3" placeholder="Ask a question or explain a different direction"></textarea><div class="actions">${button("Discuss", "discuss", !canDecide)}${button("Redirect", "redirect", !canDecide)}${button("Reject", "reject", !canDecide, "danger")}${button("Approve", "approve", !canDecide, "primary")}</div>` : change.status === "approved" ? `<div class="actions">${button("Apply approved change", "continue", snapshot.busy || !snapshot.workspaceTrusted, "primary")}</div>` : change.status === "implemented" ? `<div class="actions">${button("Run verification", "continue", snapshot.busy || !snapshot.workspaceTrusted, "primary")}</div>` : change.status === "verified" ? `<div class="actions">${button("Complete implementation", "continue", snapshot.busy || !snapshot.workspaceTrusted, "primary")}</div>` : ""}
+    ${evidence}${tests}${visualisations}${feedback}${discussionReplies}${revisionHistory}
+    ${decisionStatuses.has(change.status) ? `<label class="feedback-label" for="feedback-${escapeAttribute(change.id)}">Discuss or redirect</label><textarea id="feedback-${escapeAttribute(change.id)}" data-feedback-for="${escapeAttribute(change.id)}" rows="3" placeholder="Ask a question or explain a different direction"></textarea><div class="actions">${button("Discuss", "discuss", !canDecide)}${button("Redirect", "redirect", !canDecide)}${button("Reject", "reject", !canDecide, "danger")}${button("Approve", "approve", !canDecide, "primary")}</div>` : change.status === "approved" ? `<div class="actions">${button("Apply approved change", "continue", snapshot.busy || !snapshot.workspaceTrusted, "primary")}</div>` : change.status === "implemented" ? `<div class="actions">${button("Run verification", "continue", snapshot.busy || !snapshot.workspaceTrusted, "primary")}</div>` : change.status === "verified" || change.status === "rejected" ? `<div class="actions">${button("Next Change Unit", "continue", snapshot.busy || !snapshot.workspaceTrusted, "primary")}</div>` : ""}
   </div>`;
 
   return `<article class="change-card${completed ? " completed" : ""}" data-change-id="${escapeAttribute(change.id)}">
@@ -220,7 +223,8 @@ function renderUnderstanding(session: PairingSession, trusted: boolean, busy: bo
     ${session.finalSummary ? `<p>${escapeText(session.finalSummary)}</p>` : ""}
     <ol>${check.concepts.map((concept) => `<li>${escapeText(concept)}</li>`).join("")}</ol>
     <h3>${escapeText(check.question)}</h3>
-    ${check.answer ? `<blockquote>${escapeText(check.answer)}</blockquote>` : `<textarea id="understanding-answer" rows="4" placeholder="Explain the resulting system in your own words"></textarea>${button("Share understanding", "answer-understanding", busy || !trusted, "primary")}`}
+    ${check.answer ? `<blockquote>${escapeText(check.answer)}</blockquote>` : ""}
+    ${check.assessment !== "aligned" ? `<textarea id="understanding-answer" rows="4" placeholder="${check.assessment === "mismatch" ? "Clarify your model or explain what remains confusing" : "Explain the resulting system in your own words"}"></textarea>${button(check.assessment === "mismatch" ? "Recheck understanding" : "Share understanding", "answer-understanding", busy || !trusted, "primary")}` : ""}
     ${check.assessment ? `<div class="assessment ${escapeAttribute(check.assessment)}"><strong>${escapeText(check.assessment)}</strong>${check.explanation ? `<p>${escapeText(check.explanation)}</p>` : ""}</div>` : ""}
     ${check.assessment === "aligned" ? button("Confirm shared understanding", "confirm-convergence", busy || !trusted, "primary") : ""}
   </section>`;
@@ -234,7 +238,7 @@ export function renderReasoningPanel(snapshot: PanelSnapshot): string {
     ? `<aside class="notice ${snapshot.notice.tone}" role="status">${escapeText(snapshot.notice.message)}</aside>`
     : "";
   const approval = snapshot.pendingExecutionApproval
-    ? `<aside class="execution-approval"><span class="eyebrow">Separate host permission</span><h2>Execution permission</h2><code>${escapeText(snapshot.pendingExecutionApproval.operation)}</code>${snapshot.pendingExecutionApproval.reason ? `<p>${escapeText(snapshot.pendingExecutionApproval.reason)}</p>` : ""}<div class="actions">${button("Deny", "deny-execution", snapshot.busy || !snapshot.workspaceTrusted, "danger")}${button("Allow once", "allow-execution", snapshot.busy || !snapshot.workspaceTrusted, "primary")}</div><input type="hidden" data-execution-request-id value="${escapeAttribute(snapshot.pendingExecutionApproval.requestId)}"></aside>`
+    ? `<aside class="execution-approval"><span class="eyebrow">Separate host permission</span><h2>Execution permission</h2><code>${escapeText(snapshot.pendingExecutionApproval.operation)}</code>${snapshot.pendingExecutionApproval.reason ? `<p>${escapeText(snapshot.pendingExecutionApproval.reason)}</p>` : ""}<div class="actions">${button("Deny", "deny-execution", !snapshot.workspaceTrusted, "danger")}${button("Allow once", "allow-execution", !snapshot.workspaceTrusted, "primary")}</div><input type="hidden" data-execution-request-id value="${escapeAttribute(snapshot.pendingExecutionApproval.requestId)}"></aside>`
     : "";
 
   if (!snapshot.session) {
