@@ -1,0 +1,16 @@
+{
+  "name": "@converge/pi",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./test-support": "./test-support/index.ts"
+  },
+  "dependencies": {
+    "@converge/core": "*"
+  },
+  "devDependencies": {
+    "@converge/agent-test-support": "*"
+  }
+}
