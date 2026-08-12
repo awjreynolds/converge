@@ -9,6 +9,8 @@ describe("revoked-session fake-agent walkthrough", () => {
   it("takes the real fixture from a failing regression test to shared understanding", async () => {
     const result = await runRevokedSessionWalkthrough();
 
+    expect(result.providerId).toBe("fake-agent");
+    expect(result.session.agent.providerId).toBe("fake-agent");
     expect(result.session.status).toBe("converged");
     expect(result.session.changes.map((change) => ({
       title: change.revisions.at(-1)?.title,

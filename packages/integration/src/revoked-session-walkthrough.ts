@@ -30,12 +30,23 @@ export interface WalkthroughTestRun {
 }
 
 export interface RevokedSessionWalkthroughResult {
+  providerId: string;
   session: PairingSession;
   testRuns: WalkthroughTestRun[];
   inspectedDiffs: WalkthroughDiffInspection[];
   transcript: string[];
   sourceFixtureUnchanged: boolean;
   temporaryWorkspaceRemoved: boolean;
+}
+
+export interface RevokedSessionWalkthroughAgentContext {
+  workspaceRoot: string;
+  testRuns: WalkthroughTestRun[];
+}
+
+export interface RevokedSessionWalkthroughProvider {
+  providerId: string;
+  createAgent(context: RevokedSessionWalkthroughAgentContext): AgentPort;
 }
 
 export interface WalkthroughDiffInspection {
@@ -46,7 +57,9 @@ export interface WalkthroughDiffInspection {
 const engineerAnswer =
   "SessionService.refresh rejects a revoked session before TokenIssuer is called.";
 
-export async function runRevokedSessionWalkthrough(): Promise<RevokedSessionWalkthroughResult> {
+export async function runRevokedSessionWalkthrough(
+  provider: RevokedSessionWalkthroughProvider = fakeWalkthroughProvider,
+): Promise<RevokedSessionWalkthroughResult> {
   const sourceFixture = resolve(
     dirname(fileURLToPath(import.meta.url)),
     "../../../fixtures/revoked-session",
@@ -63,10 +76,10 @@ export async function runRevokedSessionWalkthrough(): Promise<RevokedSessionWalk
   try {
     await cp(sourceFixture, workspaceRoot, { recursive: true });
     const store = new MemorySessionStore();
-    const agent = new RevokedSessionFakeAgent(workspaceRoot, testRuns);
+    const agent = provider.createAgent({ workspaceRoot, testRuns });
     const coordinator = new PairingSessionCoordinator({
       agent,
-      agentProviderId: "fake-agent",
+      agentProviderId: provider.providerId,
       store,
       identities: new WalkthroughIdentities(),
       clock: new WalkthroughClock(),
@@ -150,6 +163,7 @@ export async function runRevokedSessionWalkthrough(): Promise<RevokedSessionWalk
   if (!session) throw new Error("The walkthrough did not create a Pairing Session");
 
   return {
+    providerId: provider.providerId,
     session,
     testRuns,
     inspectedDiffs,
@@ -161,6 +175,12 @@ export async function runRevokedSessionWalkthrough(): Promise<RevokedSessionWalk
     temporaryWorkspaceRemoved: !(await pathExists(temporaryRoot)),
   };
 }
+
+export const fakeWalkthroughProvider: RevokedSessionWalkthroughProvider = {
+  providerId: "fake-agent",
+  createAgent: ({ workspaceRoot, testRuns }) =>
+    new RevokedSessionFakeAgent(workspaceRoot, testRuns),
+};
 
 export function formatWalkthrough(result: RevokedSessionWalkthroughResult): string {
   return [
