@@ -1,0 +1,32 @@
+{
+  "name": "converge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Understand AI-generated code while it is being built, not after it is finished.",
+  "license": "MIT",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "clients/*",
+    "fixtures/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "npm run build --workspace @converge/vscode",
+    "package:vscode": "npm run package --workspace @converge/vscode",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "verify": "npm run typecheck && npm test && npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@types/vscode": "^1.125.0",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

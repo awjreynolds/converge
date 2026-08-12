@@ -1,0 +1,70 @@
+{
+  "name": "@converge/vscode",
+  "displayName": "Converge",
+  "description": "Understand AI-generated code while it is being built, not after it is finished.",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "publisher": "converge-dev",
+  "type": "module",
+  "main": "./dist/extension.cjs",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:converge.reasoning"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "converge.startSession",
+        "title": "Converge: Start Pairing Session"
+      },
+      {
+        "command": "converge.openPanel",
+        "title": "Converge: Open Reasoning Panel"
+      }
+    ],
+    "configuration": {
+      "title": "Converge",
+      "properties": {
+        "converge.codexPath": {
+          "type": "string",
+          "default": "codex",
+          "description": "Absolute path or executable name for the Codex CLI."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "converge",
+          "title": "Converge",
+          "icon": "media/converge.svg"
+        }
+      ]
+    },
+    "views": {
+      "converge": [
+        {
+          "type": "webview",
+          "id": "converge.reasoning",
+          "name": "Reasoning"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node ./scripts/build.mjs",
+    "package": "npm run build && vsce package --no-dependencies",
+    "vscode:prepublish": "npm run build"
+  },
+  "dependencies": {
+    "@converge/codex": "*",
+    "@converge/core": "*",
+    "mermaid": "^11.16.1"
+  }
+}
