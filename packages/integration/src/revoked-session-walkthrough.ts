@@ -32,9 +32,15 @@ export interface WalkthroughTestRun {
 export interface RevokedSessionWalkthroughResult {
   session: PairingSession;
   testRuns: WalkthroughTestRun[];
+  inspectedDiffs: WalkthroughDiffInspection[];
   transcript: string[];
   sourceFixtureUnchanged: boolean;
   temporaryWorkspaceRemoved: boolean;
+}
+
+export interface WalkthroughDiffInspection {
+  changeId: string;
+  paths: string[];
 }
 
 const engineerAnswer =
@@ -50,6 +56,7 @@ export async function runRevokedSessionWalkthrough(): Promise<RevokedSessionWalk
   const temporaryRoot = await mkdtemp(join(repositoryRoot, ".converge-e2e-"));
   const workspaceRoot = join(temporaryRoot, "revoked-session");
   const testRuns: WalkthroughTestRun[] = [];
+  const inspectedDiffs: WalkthroughDiffInspection[] = [];
   const transcript = ["Investigated the revoked-session task."];
   let session: PairingSession | undefined;
 
@@ -103,12 +110,28 @@ export async function runRevokedSessionWalkthrough(): Promise<RevokedSessionWalk
     transcript.push(
       "Discussed the proposal, redirected it to the existing service seam, and reviewed revision 2.",
     );
-    session = await approveAndRun(coordinator, session, "change-1", transcript, "test-only");
+    session = await approveAndRun(
+      coordinator,
+      session,
+      "change-1",
+      workspaceRoot,
+      inspectedDiffs,
+      transcript,
+      "test-only",
+    );
     session = await coordinator.runAgent(session.id, {
       phase: "investigate",
       approvalPolicy: "read-only",
     });
-    session = await approveAndRun(coordinator, session, "change-2", transcript, "implementation");
+    session = await approveAndRun(
+      coordinator,
+      session,
+      "change-2",
+      workspaceRoot,
+      inspectedDiffs,
+      transcript,
+      "implementation",
+    );
     session = await coordinator.runAgent(session.id, {
       phase: "summarize",
       approvalPolicy: "read-only",
@@ -128,6 +151,7 @@ export async function runRevokedSessionWalkthrough(): Promise<RevokedSessionWalk
   return {
     session,
     testRuns,
+    inspectedDiffs,
     transcript: [
       ...transcript,
       "Completed the Understanding Check and converged.",
@@ -148,9 +172,15 @@ async function approveAndRun(
   coordinator: PairingSessionCoordinator,
   session: PairingSession,
   changeId: string,
+  workspaceRoot: string,
+  inspectedDiffs: WalkthroughDiffInspection[],
   transcript: string[],
   kind: "test-only" | "implementation",
 ): Promise<PairingSession> {
+  const proposedChange = session.changes.find((candidate) => candidate.id === changeId);
+  const proposedRevision = proposedChange?.revisions[proposedChange.currentRevision - 1];
+  if (!proposedRevision) throw new Error(`Change Unit ${changeId} has no active revision`);
+  const before = await captureAffectedFiles(workspaceRoot, proposedRevision.affectedFiles.map((file) => file.path));
   await coordinator.dispatch(session.id, {
     type: "feedback-recorded",
     changeId,
@@ -163,9 +193,13 @@ async function approveAndRun(
   });
   const change = implemented.changes.find((candidate) => candidate.id === changeId);
   const revision = change?.revisions[change.currentRevision - 1];
-  if (!revision?.evidence.some((evidence) => evidence.kind === "diff")) {
-    throw new Error(`Change Unit ${changeId} did not expose inspectable diff evidence`);
-  }
+  if (!revision) throw new Error(`Change Unit ${changeId} has no implemented revision`);
+  const after = await captureAffectedFiles(workspaceRoot, revision.affectedFiles.map((file) => file.path));
+  const changedPaths = revision.affectedFiles
+    .map((file) => file.path)
+    .filter((path) => before.get(path) !== after.get(path));
+  if (changedPaths.length === 0) throw new Error(`Change Unit ${changeId} did not change an affected file`);
+  inspectedDiffs.push({ changeId, paths: changedPaths });
   transcript.push(`Inspected the ${kind} Change Unit diff before verification.`);
   const verified = await coordinator.runAgent(session.id, {
     phase: "verify",
@@ -178,6 +212,27 @@ async function approveAndRun(
       : "Verified the implementation with the fixture's real test suite (green).",
   );
   return verified;
+}
+
+async function captureAffectedFiles(
+  workspaceRoot: string,
+  paths: string[],
+): Promise<Map<string, string | undefined>> {
+  const captured = new Map<string, string | undefined>();
+  for (const path of paths) {
+    const target = resolve(workspaceRoot, path);
+    const withinWorkspace = relative(workspaceRoot, target);
+    if (withinWorkspace.startsWith("..") || resolve(workspaceRoot, withinWorkspace) !== target) {
+      throw new Error(`Change Unit affected path escapes the workspace: ${path}`);
+    }
+    try {
+      captured.set(path, await readFile(target, "utf8"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      captured.set(path, undefined);
+    }
+  }
+  return captured;
 }
 
 class RevokedSessionFakeAgent implements AgentPort {

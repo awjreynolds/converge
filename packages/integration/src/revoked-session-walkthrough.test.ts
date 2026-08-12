@@ -30,6 +30,10 @@ describe("revoked-session fake-agent walkthrough", () => {
       { outcome: "expected-failure", exitCode: 1 },
       { outcome: "passed", exitCode: 0 },
     ]);
+    expect(result.inspectedDiffs).toEqual([
+      { changeId: "change-1", paths: ["test/revoked-session.test.ts"] },
+      { changeId: "change-2", paths: ["src/session-service.ts"] },
+    ]);
     expect(result.session.finalSummary).toContain("SessionService.refresh");
     expect(result.session.finalSummary).toContain("public interface is unchanged");
     expect(result.session.understandingCheck).toMatchObject({
