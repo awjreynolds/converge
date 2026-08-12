@@ -202,16 +202,19 @@ describe("CodexAppServerAdapter", () => {
             item: {
               type: "agentMessage",
               text: JSON.stringify({
-                type: "proposal",
-                proposal: {
-                  title: "Reject revoked sessions",
-                  intent: "Stop revoked sessions before authorization.",
-                  rationale: "Revocation is currently ignored.",
-                  affectedFiles: [{ path: "src/auth.ts" }],
-                  risks: ["Existing stale sessions will be denied"],
-                  evidence: [{ kind: "investigation", summary: "Revocation is not checked" }],
-                  visualisations: [],
-                  tests: [],
+                result: {
+                  type: "proposal",
+                  changeId: null,
+                  proposal: {
+                    title: "Reject revoked sessions",
+                    intent: "Stop revoked sessions before authorization.",
+                    rationale: "Revocation is currently ignored.",
+                    affectedFiles: [{ path: "src/auth.ts" }],
+                    risks: ["Existing stale sessions will be denied"],
+                    evidence: [{ kind: "investigation", summary: "Revocation is not checked" }],
+                    visualisations: [],
+                    tests: [],
+                  },
                 },
               }),
             },
@@ -261,10 +264,17 @@ describe("CodexAppServerAdapter", () => {
         approvalsReviewer: "user",
         sandboxPolicy: { type: "readOnly", networkAccess: false },
         outputSchema: {
-          oneOf: [
-            { properties: { type: { const: "proposal" } } },
-            { properties: { type: { const: "summary" } } },
-          ],
+          type: "object",
+          additionalProperties: false,
+          required: ["result"],
+          properties: {
+            result: {
+              anyOf: [
+                { properties: { type: { type: "string", const: "proposal" } } },
+                { properties: { type: { type: "string", const: "summary" } } },
+              ],
+            },
+          },
         },
       },
     });

@@ -276,10 +276,14 @@ export function renderReasoningPanel(snapshot: PanelSnapshot): string {
   const progress = session.progress.length
     ? `<ol class="progress-list">${session.progress.map((item) => `<li>${escapeText(item)}</li>`).join("")}</ol>`
     : `<p class="muted">Investigation progress will appear here.</p>`;
+  const blockedReason = session.status === "blocked" && session.blockedReason
+    ? `<aside class="notice error" role="alert"><strong>Pairing Session blocked</strong><p>${escapeText(session.blockedReason)}</p></aside>`
+    : "";
 
   return `${trustBanner}${notice}${provider}<main>
     <header class="session-header"><div><span class="eyebrow">Pairing Session</span><h1>${escapeText(session.specification)}</h1></div><span class="session-status">${escapeText(renderStatus(session.status))}</span></header>
     <section class="session-progress"><div class="progress-summary"><strong>${verified} of ${session.changes.length} verified</strong><span>${escapeText(session.status)}</span></div><progress value="${verified}" max="${Math.max(session.changes.length, 1)}"></progress>${progress}</section>
+    ${blockedReason}
     ${approval}
     <section class="changes" aria-label="Change Units">${session.changes.map((change) => renderChange(change, snapshot)).join("")}</section>
     ${renderUnderstanding(session, snapshot.workspaceTrusted, snapshot.busy)}

@@ -167,20 +167,60 @@ describe("pinned Codex app-server protocol schemas", () => {
     expect(
       matchesVendoredSchema(
         {
-          type: "summary",
-          summary: "Implemented and verified.",
-          concepts: ["verification"],
-          question: "Where is the behavior enforced?",
+          result: {
+            type: "summary",
+            summary: "Implemented and verified.",
+            concepts: ["verification"],
+            question: "Where is the behavior enforced?",
+          },
         },
         outputSchema,
       ),
     ).toBe(true);
     expect(
       matchesVendoredSchema(
-        { type: "summary", summary: null, concepts: [], question: null },
+        {
+          result: {
+            type: "summary",
+            summary: "Implemented and verified.",
+            concepts: [42],
+            question: "Where is the behavior enforced?",
+          },
+        },
         outputSchema,
       ),
     ).toBe(false);
+  });
+
+  it.each([
+    "investigate",
+    "discuss",
+    "revise",
+    "implement",
+    "verify",
+    "summarize",
+    "assess-understanding",
+  ] as const)("emits a strict Structured Outputs-compatible schema for %s", async (phase) => {
+    const transport = new ConformanceTransport();
+    const adapter = new CodexAppServerAdapter({ transport });
+    const run = consume(adapter.run({
+      ...request(),
+      phase,
+      ...(phase === "discuss" || phase === "revise" || phase === "implement" || phase === "verify"
+        ? { changeId: "change-conformance" }
+        : {}),
+    }));
+    await waitForMethod(transport, "turn/start");
+    await adapter.cancel();
+    await expect(run).rejects.toBeInstanceOf(AgentRunCancelledError);
+    const turnStart = transport.sent.find(
+      (message) => "method" in message && message.method === "turn/start",
+    );
+    const outputSchema = turnStart && "params" in turnStart
+      ? (turnStart.params as Record<string, unknown>).outputSchema
+      : undefined;
+
+    expectStrictStructuredOutputSchema(outputSchema);
   });
 
   it.each([
@@ -230,6 +270,36 @@ describe("pinned Codex app-server protocol schemas", () => {
     expect(matchesVendoredSchema({ ...params, startedAtMs: "now" }, schema)).toBe(false);
   });
 });
+
+function expectStrictStructuredOutputSchema(value: unknown): void {
+  const root = asSchema(value);
+  expect(root.type).toBe("object");
+  expect(root).not.toHaveProperty("anyOf");
+  expect(root).not.toHaveProperty("oneOf");
+  visit(root);
+
+  function visit(schema: Record<string, unknown>): void {
+    expect(schema).not.toHaveProperty("oneOf");
+    if ("const" in schema || "enum" in schema) expect(schema).toHaveProperty("type");
+    if (schema.type === "object") {
+      expect(schema.additionalProperties).toBe(false);
+      const properties = asSchema(schema.properties);
+      expect(new Set(schema.required as string[])).toEqual(new Set(Object.keys(properties)));
+      for (const property of Object.values(properties)) visit(asSchema(property));
+    }
+    if (schema.type === "array") visit(asSchema(schema.items));
+    if (Array.isArray(schema.anyOf)) {
+      for (const branch of schema.anyOf) visit(asSchema(branch));
+    }
+  }
+}
+
+function asSchema(value: unknown): Record<string, unknown> {
+  expect(value).toBeTypeOf("object");
+  expect(value).not.toBeNull();
+  expect(Array.isArray(value)).toBe(false);
+  return value as Record<string, unknown>;
+}
 
 async function consume(events: AsyncIterable<unknown>): Promise<void> {
   for await (const _event of events) {

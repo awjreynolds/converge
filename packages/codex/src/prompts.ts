@@ -30,7 +30,7 @@ export function buildPrompt(request: AgentRunRequest): string {
 function phaseInstruction(phase: AgentRunRequest["phase"]): string {
   switch (phase) {
     case "investigate":
-      return "Propose the next meaningful Change Unit. If all specification work is implemented and verified, return the final summary and Understanding Check instead.";
+      return "Propose the next meaningful Change Unit. If all specification work is implemented and verified, return the final summary and Understanding Check instead. Put the selected outcome in the supplied result envelope. Use null changeId for a new proposal.";
     case "discuss":
       return "Answer the engineer's question concisely without changing the proposal. A redesign requires Redirect, not Discuss.";
     case "revise":

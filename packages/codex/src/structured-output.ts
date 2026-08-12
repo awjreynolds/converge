@@ -11,9 +11,7 @@ const TEST_OUTCOMES = ["passed", "failed", "expected-failure"] as const;
 
 export function outputSchemaFor(phase: AgentRunRequest["phase"]): Record<string, unknown> {
   if (phase === "investigate") {
-    return {
-      oneOf: [proposalOutputSchema(), summaryOutputSchema()],
-    };
+    return investigationOutputSchema();
   }
   const common = { type: "object", additionalProperties: false };
   if (phase === "revise") return proposalOutputSchema();
@@ -22,7 +20,7 @@ export function outputSchemaFor(phase: AgentRunRequest["phase"]): Record<string,
       ...common,
       required: ["type", "changeId", "message"],
       properties: {
-        type: { const: "discussion" },
+        type: { type: "string", const: "discussion" },
         changeId: { type: "string" },
         message: { type: "string" },
       },
@@ -33,7 +31,7 @@ export function outputSchemaFor(phase: AgentRunRequest["phase"]): Record<string,
       ...common,
       required: ["type", "changeId", "evidence", "tests"],
       properties: {
-        type: { const: "implementation" },
+        type: { type: "string", const: "implementation" },
         changeId: { type: "string" },
         evidence: evidenceSchema(),
         tests: testEvidenceSchema(),
@@ -45,7 +43,7 @@ export function outputSchemaFor(phase: AgentRunRequest["phase"]): Record<string,
       ...common,
       required: ["type", "changeId", "tests", "evidence"],
       properties: {
-        type: { const: "verification" },
+        type: { type: "string", const: "verification" },
         changeId: { type: "string" },
         tests: testEvidenceSchema(),
         evidence: evidenceSchema(),
@@ -57,8 +55,8 @@ export function outputSchemaFor(phase: AgentRunRequest["phase"]): Record<string,
     ...common,
     required: ["type", "assessment", "explanation"],
     properties: {
-      type: { const: "understanding-assessment" },
-      assessment: { enum: ["aligned", "mismatch"] },
+      type: { type: "string", const: "understanding-assessment" },
+      assessment: { type: "string", enum: ["aligned", "mismatch"] },
       explanation: { type: "string" },
     },
   };
@@ -72,20 +70,39 @@ export function parseAgentEvent(raw: string | undefined): AgentEvent {
   } catch {
     throw new Error("Codex final message was not valid JSON.");
   }
-  const record = asRecord(value);
+  const envelope = asRecord(value);
+  const record = asRecord(envelope?.result) ?? envelope;
   if (!record) throw new Error("Codex final message must be a JSON object.");
   return decodeStructuredAgentEvent(record, { source: "Codex" });
 }
 
-function proposalOutputSchema(): Record<string, unknown> {
+function proposalOutputSchema(
+  changeIdSchema: Record<string, unknown> = { type: "string" },
+): Record<string, unknown> {
   return {
     type: "object",
     additionalProperties: false,
-    required: ["type", "proposal"],
+    required: ["type", "changeId", "proposal"],
     properties: {
-      type: { const: "proposal" },
-      changeId: { type: "string" },
+      type: { type: "string", const: "proposal" },
+      changeId: changeIdSchema,
       proposal: revisionSchema(),
+    },
+  };
+}
+
+function investigationOutputSchema(): Record<string, unknown> {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["result"],
+    properties: {
+      result: {
+        anyOf: [
+          proposalOutputSchema({ type: ["string", "null"] }),
+          summaryOutputSchema(),
+        ],
+      },
     },
   };
 }
@@ -96,7 +113,7 @@ function summaryOutputSchema(): Record<string, unknown> {
     additionalProperties: false,
     required: ["type", "summary", "concepts", "question"],
     properties: {
-      type: { const: "summary" },
+      type: { type: "string", const: "summary" },
       summary: { type: "string" },
       concepts: { type: "array", items: { type: "string" } },
       question: { type: "string" },
@@ -147,7 +164,7 @@ function revisionSchema(): Record<string, unknown> {
           additionalProperties: false,
           required: ["kind", "title", "source"],
           properties: {
-            kind: { const: "mermaid" },
+            kind: { type: "string", const: "mermaid" },
             title: { type: "string" },
             source: { type: "string" },
           },
@@ -166,7 +183,7 @@ function evidenceSchema(): Record<string, unknown> {
       additionalProperties: false,
       required: ["kind", "summary", "detail"],
       properties: {
-        kind: { enum: [...EVIDENCE_KINDS] },
+        kind: { type: "string", enum: [...EVIDENCE_KINDS] },
         summary: { type: "string" },
         detail: { type: ["string", "null"] },
       },
@@ -183,7 +200,7 @@ function testEvidenceSchema(): Record<string, unknown> {
       required: ["command", "outcome", "summary"],
       properties: {
         command: { type: "string" },
-        outcome: { enum: [...TEST_OUTCOMES] },
+        outcome: { type: "string", enum: [...TEST_OUTCOMES] },
         summary: { type: "string" },
       },
     },

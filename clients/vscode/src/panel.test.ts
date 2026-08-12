@@ -173,6 +173,20 @@ describe("renderReasoningPanel", () => {
     expect(html).toContain('data-action="stop-agent"');
   });
 
+  it("shows the persisted provider failure when a Pairing Session is blocked", () => {
+    const blocked: PairingSession = {
+      ...session,
+      status: "blocked",
+      blockedReason: "Codex rejected the output schema: <oneOf> is not permitted.",
+    };
+
+    const html = renderReasoningPanel(snapshot({ session: blocked }));
+
+    expect(html).toContain("Pairing Session blocked");
+    expect(html).toContain("Codex rejected the output schema: &lt;oneOf&gt; is not permitted.");
+    expect(html).not.toContain("<oneOf>");
+  });
+
   it("renders a compact current Change Unit with progress, evidence, actions and revision history", () => {
     const html = renderReasoningPanel(snapshot());
 
