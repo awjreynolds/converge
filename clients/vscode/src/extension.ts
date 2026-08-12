@@ -124,7 +124,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return;
   }
   const executablePath = configuration.get<string>("codexPath", "codex");
-  const agent = await selected.create({ workspaceRoot, codexPath: executablePath });
+  const claudePath = configuration.get<string>("claudePath", "claude");
+  const agent = await selected.create({
+    workspaceRoot,
+    codexPath: executablePath,
+    claudePath,
+  });
   const driver = new ConvergeSessionDriver({
     agent,
     providerId: selected.descriptor.id,
@@ -159,7 +164,7 @@ export function selectConfiguredProvider(
 function productionProviderFactories(): { codex: AgentProviderFactory; claude?: AgentProviderFactory } {
   return {
     codex: ({ codexPath }) => new CodexAppServerAdapter({ executablePath: codexPath }),
-    claude: () => new ClaudeAgentAdapter(),
+    claude: ({ claudePath }) => new ClaudeAgentAdapter({ executablePath: claudePath }),
   };
 }
 

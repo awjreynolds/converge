@@ -7,6 +7,7 @@ import {
 } from "./provider-registry.js";
 
 const inertAgent: AgentPort = {
+  async validate() {},
   async *run() {},
   async cancel() {},
   async respondToExecutionApproval() {},
@@ -26,6 +27,7 @@ describe("AgentProviderRegistry", () => {
     const agent = await selected.create({
       workspaceRoot: "/workspace",
       codexPath: "/opt/codex",
+      claudePath: "claude",
     });
 
     expect(selected.descriptor.id).toBe("codex");
@@ -34,6 +36,7 @@ describe("AgentProviderRegistry", () => {
     expect(codex).toHaveBeenCalledWith({
       workspaceRoot: "/workspace",
       codexPath: "/opt/codex",
+      claudePath: "claude",
     });
   });
 
@@ -42,7 +45,11 @@ describe("AgentProviderRegistry", () => {
     const registry = createProviderRegistry({ codex: factory(), claude });
 
     const selected = registry.select("claude");
-    await selected.create({ workspaceRoot: "/workspace", codexPath: "ignored" });
+    await selected.create({
+      workspaceRoot: "/workspace",
+      codexPath: "ignored",
+      claudePath: "/opt/claude",
+    });
 
     expect(selected.descriptor).toMatchObject({
       id: "claude",
@@ -58,6 +65,7 @@ describe("AgentProviderRegistry", () => {
     expect(claude).toHaveBeenCalledWith({
       workspaceRoot: "/workspace",
       codexPath: "ignored",
+      claudePath: "/opt/claude",
     });
   });
 

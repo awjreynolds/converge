@@ -1,4 +1,5 @@
 import {
+  AgentRunCancelledError,
   PairingSessionCoordinator,
   normalizePairingSession,
   type AgentPort,
@@ -31,6 +32,8 @@ export class ConvergeSessionDriver implements SessionDriver {
   readonly #legacyProviderId: string;
   readonly #executionDecisions = new Map<string, (decision: "approved" | "denied") => void>();
   #approvalHandler: ((approval: ExecutionApproval) => void) | undefined;
+  #activeOperation: { cancelled: boolean } | undefined;
+  #validation: Promise<void> | undefined;
 
   constructor(options: ConvergeSessionDriverOptions) {
     this.#agent = options.agent;
@@ -73,13 +76,16 @@ export class ConvergeSessionDriver implements SessionDriver {
   }
 
   async startSession(specification: string): Promise<PairingSession> {
-    const session = await this.#coordinator.createSession({
-      specification,
-      workspaceRoot: this.#workspaceRoot,
-    });
-    return this.#coordinator.runAgent(session.id, {
-      phase: "investigate",
-      approvalPolicy: "read-only",
+    return this.#withAgentOperation(async (ensureActive) => {
+      const session = await this.#coordinator.createSession({
+        specification,
+        workspaceRoot: this.#workspaceRoot,
+      });
+      ensureActive();
+      return this.#coordinator.runAgent(session.id, {
+        phase: "investigate",
+        approvalPolicy: "read-only",
+      });
     });
   }
 
@@ -99,11 +105,14 @@ export class ConvergeSessionDriver implements SessionDriver {
         feedback: { decision, ...(message === undefined ? {} : { message }) },
       });
       if (decision === "discuss" || decision === "redirect") {
-        return this.#coordinator.runAgent(updated.id, {
-          phase: decision === "discuss" ? "discuss" : "revise",
-          changeId,
-          ...(message === undefined ? {} : { humanMessage: message }),
-          approvalPolicy: "read-only",
+        return this.#withAgentOperation(async (ensureActive) => {
+          ensureActive();
+          return this.#coordinator.runAgent(updated.id, {
+            phase: decision === "discuss" ? "discuss" : "revise",
+            changeId,
+            ...(message === undefined ? {} : { humanMessage: message }),
+            approvalPolicy: "read-only",
+          });
         });
       }
       return updated;
@@ -111,22 +120,17 @@ export class ConvergeSessionDriver implements SessionDriver {
 
     switch (change.status) {
       case "approved":
-        return this.#coordinator.runAgent(session.id, {
-          phase: "implement",
-          changeId,
-          approvalPolicy: "workspace-write",
+        return this.#runAgent(session.id, {
+          phase: "implement", changeId, approvalPolicy: "workspace-write",
         });
       case "implemented":
-        return this.#coordinator.runAgent(session.id, {
-          phase: "verify",
-          changeId,
-          approvalPolicy: "workspace-write",
+        return this.#runAgent(session.id, {
+          phase: "verify", changeId, approvalPolicy: "workspace-write",
         });
       case "verified":
       case "rejected":
-        return this.#coordinator.runAgent(session.id, {
-          phase: "investigate",
-          approvalPolicy: "read-only",
+        return this.#runAgent(session.id, {
+          phase: "investigate", approvalPolicy: "read-only",
         });
       case "discussing":
         return this.#coordinator.dispatch(session.id, {
@@ -140,7 +144,7 @@ export class ConvergeSessionDriver implements SessionDriver {
   }
 
   async answerUnderstanding(session: PairingSession, answer: string): Promise<PairingSession> {
-    return this.#coordinator.runAgent(session.id, {
+    return this.#runAgent(session.id, {
       phase: "assess-understanding",
       humanMessage: answer,
       approvalPolicy: "read-only",
@@ -162,6 +166,7 @@ export class ConvergeSessionDriver implements SessionDriver {
   }
 
   async cancelActiveRun(): Promise<void> {
+    if (this.#activeOperation) this.#activeOperation.cancelled = true;
     for (const resolve of this.#executionDecisions.values()) resolve("denied");
     this.#executionDecisions.clear();
     await this.#agent.cancel();
@@ -171,5 +176,45 @@ export class ConvergeSessionDriver implements SessionDriver {
     for (const resolve of this.#executionDecisions.values()) resolve("denied");
     this.#executionDecisions.clear();
     await this.#agent.dispose();
+  }
+
+  async #runAgent(
+    sessionId: string,
+    input: Parameters<PairingSessionCoordinator["runAgent"]>[1],
+  ): Promise<PairingSession> {
+    return this.#withAgentOperation(async (ensureActive) => {
+      ensureActive();
+      return this.#coordinator.runAgent(sessionId, input);
+    });
+  }
+
+  async #withAgentOperation<T>(
+    operation: (ensureActive: () => void) => Promise<T>,
+  ): Promise<T> {
+    if (this.#activeOperation) {
+      throw new Error("Converge already has an active provider operation.");
+    }
+    const active = { cancelled: false };
+    this.#activeOperation = active;
+    const ensureActive = (): void => {
+      if (active.cancelled) throw new AgentRunCancelledError();
+    };
+    try {
+      await this.#validateProvider();
+      ensureActive();
+      return await operation(ensureActive);
+    } finally {
+      if (this.#activeOperation === active) this.#activeOperation = undefined;
+    }
+  }
+
+  async #validateProvider(): Promise<void> {
+    this.#validation ??= this.#agent.validate();
+    try {
+      await this.#validation;
+    } catch (error) {
+      this.#validation = undefined;
+      throw error;
+    }
   }
 }

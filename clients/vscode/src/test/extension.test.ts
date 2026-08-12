@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readdir } from "node:fs/promises";
+import { join } from "node:path";
 import * as vscode from "vscode";
 import type { AgentPort, PairingSession, PairingSessionStore } from "@converge/core";
 
@@ -13,6 +15,8 @@ export async function run(): Promise<void> {
   console.log("PASS open-panel activates the extension and registers public commands");
   await selectsProvidersFromRealWorkspaceConfiguration();
   console.log("PASS provider selection uses VS Code workspace configuration without live calls");
+  await rejectsMissingProviderExecutableBeforeSessionPersistence();
+  console.log("PASS missing provider executable is rejected before session persistence");
   await rejectsProviderMismatchBeforeExecution();
   console.log("PASS persisted provider mismatch is diagnosed before execution");
   await migratesLegacyWorkspaceStateToCodex();
@@ -22,6 +26,7 @@ export async function run(): Promise<void> {
 }
 
 const inertAgent: AgentPort = {
+  async validate() {},
   async *run() {},
   async cancel() {},
   async respondToExecutionApproval() {},
@@ -37,12 +42,50 @@ async function selectsProvidersFromRealWorkspaceConfiguration(): Promise<void> {
     claude: () => inertAgent,
   });
   assert.equal(selected.descriptor.id, "claude");
-  assert.equal(await selected.create({ workspaceRoot: "/synthetic", codexPath: "unused" }), inertAgent);
+  assert.equal(
+    await selected.create({
+      workspaceRoot: "/synthetic",
+      codexPath: "unused",
+      claudePath: "unused",
+    }),
+    inertAgent,
+  );
 
   assert.throws(
     () => selectConfiguredProvider(configuration, { codex: () => inertAgent }),
     /Claude support is not available in this Converge build/,
   );
+}
+
+async function rejectsMissingProviderExecutableBeforeSessionPersistence(): Promise<void> {
+  const configuration = vscode.workspace.getConfiguration("converge");
+  assert.equal(
+    configuration.get<string>("claudePath"),
+    "__converge_test_missing_claude_executable__",
+  );
+
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  assert.ok(workspaceRoot);
+  const sessionsDirectory = join(workspaceRoot, ".converge", "sessions");
+  const before = await listIfPresent(sessionsDirectory);
+
+  await assert.doesNotReject(async () => {
+    await vscode.commands.executeCommand(
+      "converge.startSession",
+      "Validate the selected provider without sending repository content",
+    );
+  });
+
+  assert.deepEqual(await listIfPresent(sessionsDirectory), before);
+}
+
+async function listIfPresent(directory: string): Promise<string[]> {
+  try {
+    return (await readdir(directory)).sort();
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return [];
+    throw error;
+  }
 }
 
 async function rejectsProviderMismatchBeforeExecution(): Promise<void> {

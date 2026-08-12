@@ -10,6 +10,10 @@ process.exitCode = await runTests({
   cachePath,
   extensionDevelopmentPath: extensionRoot,
   extensionTestsPath: join(extensionRoot, "dist", "test", "extension.test.cjs"),
+  extensionTestsEnv: {
+    ...process.env,
+    ANTHROPIC_API_KEY: "converge-extension-host-placeholder",
+  },
   launchArgs: [
     join(extensionRoot, "test-fixtures", "extension-host"),
     "--disable-extensions",

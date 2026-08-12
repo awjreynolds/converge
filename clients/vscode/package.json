@@ -32,7 +32,8 @@
       "description": "Pairing Sessions and diffs remain readable. Agent execution, workspace edits, tasks, and terminals are disabled.",
       "restrictedConfigurations": [
         "converge.provider",
-        "converge.codexPath"
+        "converge.codexPath",
+        "converge.claudePath"
       ]
     },
     "virtualWorkspaces": false
@@ -68,6 +69,11 @@
           "type": "string",
           "default": "codex",
           "description": "Absolute path or executable name for the Codex CLI."
+        },
+        "converge.claudePath": {
+          "type": "string",
+          "default": "claude",
+          "description": "Absolute path or executable name for the supported Claude Code CLI."
         }
       }
     },
@@ -108,6 +114,7 @@
     "dist/webview.js",
     "media/**",
     "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
     "README.md",
     "package.json"
   ]

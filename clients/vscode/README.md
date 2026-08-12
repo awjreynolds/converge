@@ -21,6 +21,11 @@ Codex executable. Claude authentication stays entirely provider-owned; Converge 
 credential setting. The Reasoning Panel identifies the selected provider, shows capability limits,
 and offers **Stop agent** while a turn is active.
 
+The packaged extension uses a local Claude Code installation instead of embedding Anthropic's large
+platform binary. Set `converge.claudePath` when `claude` is not on VS Code's process path. Converge
+checks Claude Code `2.1.228` and provider-owned API/cloud authentication before it persists a new
+Pairing Session.
+
 ## Extension Host tests
 
 The integration suite uses `@vscode/test-electron` directly to download the minimum supported VS Code 1.95 runtime, opens the minimal fixture

@@ -24,6 +24,7 @@ export interface AgentProviderDescriptor {
 export interface AgentProviderFactoryInput {
   workspaceRoot: string;
   codexPath: string;
+  claudePath: string;
 }
 
 export type AgentProviderFactory = (
@@ -67,7 +68,7 @@ const descriptors: Record<AgentProviderId, AgentProviderDescriptor> = {
       "Shell commands can perform network activity unless the workspace is externally sandboxed.",
     ],
     setupGuidance:
-      "Configure provider-owned API-key or supported cloud authentication. Converge never collects or stores Claude credentials.",
+      "Install the supported Claude Code CLI, configure converge.claudePath, and use provider-owned API-key or supported cloud authentication. Converge never collects or stores Claude credentials.",
   },
 };
 

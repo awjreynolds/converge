@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type {
-  AgentEvent,
-  AgentPort,
-  AgentRunRequest,
-  PairingSession,
-  PairingSessionStore,
+import {
+  AgentRunCancelledError,
+  type AgentEvent,
+  type AgentPort,
+  type AgentRunRequest,
+  type PairingSession,
+  type PairingSessionStore,
 } from "@converge/core";
-
 import { ConvergeSessionDriver } from "./runtime-driver.js";
 
 class MemoryStore implements PairingSessionStore {
@@ -29,6 +29,11 @@ class MemoryStore implements PairingSessionStore {
 class ScriptedAgent implements AgentPort {
   phases: string[] = [];
   investigationCount = 0;
+  validationCount = 0;
+
+  async validate(): Promise<void> {
+    this.validationCount += 1;
+  }
 
   async cancel(): Promise<void> {}
 
@@ -116,6 +121,76 @@ class ScriptedAgent implements AgentPort {
 }
 
 describe("ConvergeSessionDriver", () => {
+  it("validates the provider before persisting a new Pairing Session", async () => {
+    const store = new MemoryStore();
+    const agent: AgentPort = {
+      async validate() {
+        throw new Error("Configured provider is unavailable.");
+      },
+      async *run() {},
+      async cancel() {},
+      async respondToExecutionApproval() {},
+      async dispose() {},
+    };
+    const driver = new ConvergeSessionDriver({
+      agent,
+      providerId: "claude",
+      legacyProviderId: "codex",
+      store,
+      workspaceRoot: "/fixture",
+      identities: {
+        nextSessionId: () => "must-not-be-created",
+        nextChangeUnitId: () => "unused",
+      },
+      clock: { now: () => "2026-08-12T00:00:00.000Z" },
+    });
+
+    await expect(driver.startSession("Do not persist this")).rejects.toThrow(
+      "Configured provider is unavailable.",
+    );
+    expect(store.session).toBeUndefined();
+  });
+
+  it("latches Stop while session persistence is still ahead of provider startup", async () => {
+    let releaseSave = (): void => undefined;
+    let announceSave = (): void => undefined;
+    const saveStarted = new Promise<void>((resolve) => {
+      announceSave = resolve;
+    });
+    const saveReleased = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    const store = new MemoryStore();
+    store.save = vi.fn(async (session: PairingSession) => {
+      announceSave();
+      await saveReleased;
+      store.session = session;
+    });
+    const agent = new ScriptedAgent();
+    agent.cancel = vi.fn(async () => undefined);
+    const driver = new ConvergeSessionDriver({
+      agent,
+      providerId: "codex",
+      legacyProviderId: "codex",
+      store,
+      workspaceRoot: "/fixture",
+      identities: {
+        nextSessionId: () => "session-starting",
+        nextChangeUnitId: () => "unused",
+      },
+      clock: { now: () => "2026-08-12T00:00:00.000Z" },
+    });
+
+    const starting = driver.startSession("Cancel before the provider run starts");
+    await saveStarted;
+    await driver.cancelActiveRun();
+    releaseSave();
+
+    await expect(starting).rejects.toBeInstanceOf(AgentRunCancelledError);
+    expect(agent.phases).toEqual([]);
+    expect(agent.cancel).toHaveBeenCalledOnce();
+  });
+
   it("paces a failing-test and implementation Change Unit through shared understanding", async () => {
     const agent = new ScriptedAgent();
     const store = new MemoryStore();
@@ -181,6 +256,7 @@ describe("ConvergeSessionDriver", () => {
       "investigate",
       "assess-understanding",
     ]);
+    expect(agent.validationCount).toBe(1);
   });
 
   it("turns discussion into a revised proposal without losing the Change Unit identity", async () => {
@@ -322,6 +398,7 @@ describe("ConvergeSessionDriver", () => {
   it("cancels the provider and denies pending execution approvals", async () => {
     let approvalDecision: "approved" | "denied" | undefined;
     const agent: AgentPort = {
+      async validate() {},
       async *run() {
         yield {
           type: "execution-approval-requested",
