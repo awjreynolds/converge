@@ -22,7 +22,7 @@ Codex app-server is currently experimental. Converge validates the local CLI ver
 
 ## Requirements
 
-- Node.js 20 or newer
+- Node.js 22 or newer
 - npm
 - desktop VS Code 1.95 or newer
 - an installed and authenticated Codex CLI
@@ -31,16 +31,14 @@ Codex app-server is currently experimental. Converge validates the local CLI ver
 
 ```bash
 npm ci
-npm run typecheck
-npm test
-npm run build
+npm run verify
 ```
 
 Press `F5` from the repository in VS Code to launch an Extension Development Host, or build an installable package:
 
 ```bash
 npm run package:vscode
-code --install-extension clients/vscode/converge-0.1.0.vsix
+code --install-extension clients/vscode/converge-vscode-0.1.0.vsix
 ```
 
 In the target workspace, run **Converge: Start Pairing Session** from the Command Palette or open the Converge activity-bar view. Configure `converge.codexPath` if `codex` is not on VS Code's process path.

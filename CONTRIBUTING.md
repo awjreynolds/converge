@@ -9,7 +9,9 @@ npm ci
 npm run verify
 ```
 
-Use Node.js 20 or newer. Keep the core independent of VS Code and Codex-specific chat formats.
+Use Node.js 22 or newer. Keep the core independent of VS Code and Codex-specific chat formats.
+
+`npm run verify` includes the approved dependency-license policy. Run `npm run audit` before changing dependencies; CI rejects moderate-or-higher advisories.
 
 ## Tests
 
