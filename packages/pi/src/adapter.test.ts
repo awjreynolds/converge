@@ -22,6 +22,12 @@ const session = (conversationId?: string): PairingSession => ({
 const request = (conversationId?: string): AgentRunRequest => ({ phase: "investigate", session: session(conversationId), approvalPolicy: "read-only" });
 
 describe("PiAgentAdapter", () => {
+  it("requires an explicit reviewed gate asset for a production transport", () => {
+    expect(() => new PiAgentAdapter()).toThrow(
+      "Pi production transport requires gateExtensionPath",
+    );
+  });
+
   it("maps Pi identity, progress, and structured output through AgentPort", async () => {
     const transport = new RecordingTransport([
       { type: "conversation-started", conversationId: "pi-session-1" },

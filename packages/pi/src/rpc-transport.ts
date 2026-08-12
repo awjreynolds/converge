@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { AsyncQueue } from "@converge/core";
@@ -17,7 +16,7 @@ import { spawnPiRpcConnection } from "./rpc-connection.js";
 
 export interface PiRpcTransportOptions {
   executablePath?: string;
-  gateExtensionPath?: string;
+  gateExtensionPath: string;
   supportedCliVersion?: string;
   workspaceRoot?: string;
   connectionFactory?: PiRpcConnectionFactory;
@@ -51,9 +50,9 @@ export class PiRpcTransport implements PiTransport {
   #active: ActiveRun | undefined;
   #disposed = false;
 
-  constructor(options: PiRpcTransportOptions = {}) {
+  constructor(options: PiRpcTransportOptions) {
     this.#executablePath = options.executablePath ?? "pi";
-    this.#gateExtensionPath = options.gateExtensionPath ?? fileURLToPath(new URL("../assets/converge-extension.js", import.meta.url));
+    this.#gateExtensionPath = options.gateExtensionPath;
     this.#supportedCliVersion = options.supportedCliVersion ?? TESTED_PI_CLI_VERSION;
     this.#workspaceRoot = options.workspaceRoot ?? process.cwd();
     this.#connectionFactory = options.connectionFactory ?? spawnPiRpcConnection;
@@ -248,7 +247,7 @@ function validationArguments(): string[] {
 
 function runArguments(gateExtensionPath: string, approvalPolicy: PiTransportRunRequest["approvalPolicy"], resume?: string): string[] {
   const tools = approvalPolicy === "read-only" ? READ_ONLY_TOOLS : [...READ_ONLY_TOOLS, ...MUTATING_TOOLS];
-  return ["--mode", "rpc", "--no-extensions", "--extension", gateExtensionPath, "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "--no-approve", "--tools", tools.join(","), ...(resume === undefined ? [] : ["--session-id", resume])];
+  return ["--mode", "rpc", "--no-extensions", "--extension", gateExtensionPath, "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "--no-approve", "--tools", tools.join(","), ...(resume === undefined ? [] : ["--session", resume])];
 }
 
 function ensureSuccessfulResponse(record: Record<string, unknown>, command: string): void {

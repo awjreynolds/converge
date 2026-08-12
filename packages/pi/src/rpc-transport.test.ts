@@ -44,6 +44,7 @@ describe("PiRpcTransport", () => {
       if (message.type === "get_available_models") current.queue.push(response(message.id, "get_available_models", { models: [{ provider: "anthropic", id: "sonnet" }] }));
     });
     const transport = new PiRpcTransport({
+      gateExtensionPath: "/converge/gate.js",
       executablePath: process.execPath,
       supportedCliVersion: process.versions.node,
       workspaceRoot: "/workspace/converge-fixture",
@@ -66,6 +67,7 @@ describe("PiRpcTransport", () => {
       if (message.type === "get_available_models") current.queue.push(response(message.id, "get_available_models", { models: [] }));
     });
     const transport = new PiRpcTransport({
+      gateExtensionPath: "/converge/gate.js",
       executablePath: process.execPath, supportedCliVersion: process.versions.node,
       connectionFactory: async () => connection,
     });
@@ -73,13 +75,14 @@ describe("PiRpcTransport", () => {
   });
 
   it("reports a stable missing executable diagnostic", async () => {
-    const transport = new PiRpcTransport({ executablePath: "/missing/converge-pi" });
+    const transport = new PiRpcTransport({ executablePath: "/missing/converge-pi", gateExtensionPath: "/converge/gate.js" });
     await expect(transport.validate()).rejects.toThrow("Pi executable");
   });
 
   it("rejects unsupported Pi CLI versions before starting RPC", async () => {
     let launched = false;
     const transport = new PiRpcTransport({
+      gateExtensionPath: "/converge/gate.js",
       executablePath: process.execPath,
       supportedCliVersion: "0.84.1",
       connectionFactory: async () => { launched = true; return new ReactiveConnection(() => {}); },
@@ -111,8 +114,9 @@ describe("PiRpcTransport", () => {
     const transport = new PiRpcTransport({ gateExtensionPath: "/converge/gate.js", connectionFactory: async (launch) => { launches.push(launch); return successfulRunConnection(); } });
     await collect(transport, runRequest({ approvalPolicy: "workspace-write", resume: "full-session-id" }));
     expect(launches[0]?.args).toEqual(expect.arrayContaining([
-      "--tools", "read,grep,find,ls,converge_result,bash,edit,write", "--session-id", "full-session-id",
+      "--tools", "read,grep,find,ls,converge_result,bash,edit,write", "--session", "full-session-id",
     ]));
+    expect(launches[0]?.args).not.toContain("--session-id");
   });
 
   it("mediates only the gate's exact confirm sentinel", async () => {
@@ -128,7 +132,7 @@ describe("PiRpcTransport", () => {
         current.queue.push({ type: "agent_settled" });
       }
     });
-    const transport = new PiRpcTransport({ connectionFactory: async () => connection });
+    const transport = new PiRpcTransport({ gateExtensionPath: "/converge/gate.js", connectionFactory: async () => connection });
     const iterator = transport.run(runRequest({ approvalPolicy: "workspace-write" }))[Symbol.asyncIterator]();
     expect(await iterator.next()).toMatchObject({ value: { type: "conversation-started" } });
     expect(await iterator.next()).toEqual({ done: false, value: { type: "execution-approval-requested", requestId: "approval-1", operation: "npm test", reason: "Verify" } });
@@ -148,7 +152,7 @@ describe("PiRpcTransport", () => {
         current.queue.push({ type: "agent_settled" });
       }
     });
-    const transport = new PiRpcTransport({ connectionFactory: async () => connection });
+    const transport = new PiRpcTransport({ gateExtensionPath: "/converge/gate.js", connectionFactory: async () => connection });
     const events = await collect(transport, runRequest());
     expect(events).not.toContainEqual(expect.objectContaining({ type: "execution-approval-requested" }));
     expect(connection.sent).toContainEqual({ type: "extension_ui_response", id: "unknown-ui", cancelled: true });
@@ -161,14 +165,14 @@ describe("PiRpcTransport", () => {
         current.queue.push(toolResult(summary)); current.queue.push(toolResult(summary)); current.queue.push({ type: "agent_settled" });
       }
     });
-    const events = await collect(new PiRpcTransport({ connectionFactory: async () => connection }), runRequest());
+    const events = await collect(new PiRpcTransport({ gateExtensionPath: "/converge/gate.js", connectionFactory: async () => connection }), runRequest());
     expect(events.at(-1)).toEqual({ type: "error", message: "Pi RPC disconnected unexpectedly: Pi returned more than one converge_result." });
   });
 
   it("cancels safely while process startup is in flight", async () => {
     let release!: (connection: PiRpcConnection) => void;
     const connectionPromise = new Promise<PiRpcConnection>((resolve) => { release = resolve; });
-    const transport = new PiRpcTransport({ connectionFactory: async () => connectionPromise });
+    const transport = new PiRpcTransport({ gateExtensionPath: "/converge/gate.js", connectionFactory: async () => connectionPromise });
     const run = collect(transport, runRequest());
     await transport.cancel();
     release(new ReactiveConnection(() => {}));
@@ -180,7 +184,7 @@ describe("PiRpcTransport", () => {
       if (message.type === "get_state") current.queue.push(response(message.id, "get_state", { sessionId: "pi-session-1" }));
       if (message.type === "prompt") current.queue.push({ type: "extension_ui_request", id: "approval-1", method: "confirm", title: PI_APPROVAL_SENTINEL, message: JSON.stringify({ toolName: "write", operation: "write src/a.ts" }) });
     });
-    const transport = new PiRpcTransport({ connectionFactory: async () => connection });
+    const transport = new PiRpcTransport({ gateExtensionPath: "/converge/gate.js", connectionFactory: async () => connection });
     const iterator = transport.run(runRequest({ approvalPolicy: "workspace-write" }))[Symbol.asyncIterator]();
     await iterator.next();
     await iterator.next();
@@ -196,7 +200,7 @@ describe("PiRpcTransport", () => {
       if (message.type === "get_state") current.queue.push(response(message.id, "get_state", { sessionId: "pi-session-1" }));
       if (message.type === "prompt") { current.queue.push({ type: "converge_transport_error", error: "API_KEY=secret-value socket closed" }); current.queue.close(); }
     });
-    const events = await collect(new PiRpcTransport({ connectionFactory: async () => connection }), runRequest());
+    const events = await collect(new PiRpcTransport({ gateExtensionPath: "/converge/gate.js", connectionFactory: async () => connection }), runRequest());
     expect(events.at(-1)).toEqual({ type: "error", message: "Pi RPC disconnected unexpectedly: API_KEY=[REDACTED] socket closed" });
   });
 });

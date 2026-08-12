@@ -27,7 +27,12 @@ export class PiAgentAdapter implements AgentPort {
       this.#transport = options.transport;
       this.#validate = async () => {};
     } else {
-      const transport = new PiRpcTransport(options);
+      if (options.gateExtensionPath === undefined) {
+        throw new Error(
+          "Pi production transport requires gateExtensionPath to the reviewed Converge gate asset.",
+        );
+      }
+      const transport = new PiRpcTransport({ ...options, gateExtensionPath: options.gateExtensionPath });
       this.#transport = transport;
       this.#validate = () => transport.validate();
     }
