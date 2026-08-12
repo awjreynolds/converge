@@ -1,0 +1,16 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Converge",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/clients/vscode",
+        "${workspaceFolder}/fixtures/revoked-session"
+      ],
+      "outFiles": ["${workspaceFolder}/clients/vscode/dist/**/*.js"],
+      "preLaunchTask": "build Converge"
+    }
+  ]
+}
