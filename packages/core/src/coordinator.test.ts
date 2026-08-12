@@ -78,6 +78,35 @@ describe("PairingSessionCoordinator", () => {
     expect(agent.responses).toEqual([{ requestId: "exec-1", decision: "approved" }]);
   });
 
+  it("denies execution permission when no approval decision is available", async () => {
+    const store = new RecordingStore();
+    const agent = new RecordingAgent([
+      {
+        type: "execution-approval-requested",
+        requestId: "exec-denied",
+        operation: "npm test",
+        reason: "Run verification",
+      },
+    ]);
+    const coordinator = new PairingSessionCoordinator({
+      agent,
+      store,
+      identities: new FixedIdentity(),
+      clock: new IncrementingClock(),
+    });
+    const session = await coordinator.createSession({
+      specification: "Revoke a session",
+      workspaceRoot: "/repo",
+    });
+
+    await coordinator.runAgent(session.id, {
+      phase: "investigate",
+      approvalPolicy: "read-only",
+    });
+
+    expect(agent.responses).toEqual([{ requestId: "exec-denied", decision: "denied" }]);
+  });
+
   it("coordinates implementation, verification, summary, and understanding to convergence", async () => {
     const store = new RecordingStore();
     const agent = new ScriptedAgent([

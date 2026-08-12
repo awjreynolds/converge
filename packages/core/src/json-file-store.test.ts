@@ -23,8 +23,9 @@ describe("JsonFilePairingSessionStore", () => {
     await store.save(session);
     session.progress.push("mutated after save");
 
-    await expect(store.load("session-1")).resolves.toEqual(exampleSession());
-    await expect(store.list()).resolves.toEqual([exampleSession()]);
+    const restartedStore = JsonFilePairingSessionStore.forWorkspace(workspace);
+    await expect(restartedStore.load("session-1")).resolves.toEqual(exampleSession());
+    await expect(restartedStore.list()).resolves.toEqual([exampleSession()]);
     const stored = JSON.parse(
       await readFile(join(workspace, ".converge", "sessions", "session-1.json"), "utf8"),
     ) as PairingSession;
