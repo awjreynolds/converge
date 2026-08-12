@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { PairingSessionCoordinator } from "./index.js";
+import { AgentRunCancelledError, PairingSessionCoordinator } from "./index.js";
 import type {
   AgentEvent,
   AgentPort,
@@ -15,7 +15,7 @@ describe("PairingSessionCoordinator", () => {
   it("persists each agent transition and keeps execution approval separate from design approval", async () => {
     const store = new RecordingStore();
     const agent = new RecordingAgent([
-      { type: "thread-started", threadId: "codex-thread-1" },
+      { type: "conversation-started", conversationId: "conversation-1" },
       { type: "progress", message: "Found the revocation lookup" },
       {
         type: "execution-approval-requested",
@@ -40,6 +40,7 @@ describe("PairingSessionCoordinator", () => {
     const approvals: string[] = [];
     const coordinator = new PairingSessionCoordinator({
       agent,
+      agentProviderId: "provider-a",
       store,
       identities: new FixedIdentity(),
       clock: new SequenceClock([
@@ -71,7 +72,9 @@ describe("PairingSessionCoordinator", () => {
       "investigating",
       "awaiting-human",
     ]);
-    expect(store.saves[2]?.agentThreadId).toBe("codex-thread-1");
+    expect(store.saves[2]).toMatchObject({
+      agent: { providerId: "provider-a", conversationId: "conversation-1" },
+    });
     expect(store.saves[3]?.progress).toEqual(["Found the revocation lookup"]);
     expect(result.changes[0]?.status).toBe("proposed");
     expect(approvals).toEqual(["exec-1"]);
@@ -90,6 +93,7 @@ describe("PairingSessionCoordinator", () => {
     ]);
     const coordinator = new PairingSessionCoordinator({
       agent,
+      agentProviderId: "provider-a",
       store,
       identities: new FixedIdentity(),
       clock: new IncrementingClock(),
@@ -105,6 +109,110 @@ describe("PairingSessionCoordinator", () => {
     });
 
     expect(agent.responses).toEqual([{ requestId: "exec-denied", decision: "denied" }]);
+  });
+
+  it("refuses to run a persisted session through a different provider", async () => {
+    const store = new RecordingStore();
+    const agent = new RecordingAgent([]);
+    const coordinator = new PairingSessionCoordinator({
+      agent,
+      agentProviderId: "provider-a",
+      store,
+      identities: new FixedIdentity(),
+      clock: new IncrementingClock(),
+    });
+    const session = await coordinator.createSession({
+      specification: "Revoke a session",
+      workspaceRoot: "/repo",
+    });
+    await store.save({
+      ...session,
+      agent: { providerId: "provider-b", conversationId: "conversation-b" },
+    });
+    const savesBeforeRun = store.saves.length;
+
+    await expect(
+      coordinator.runAgent(session.id, {
+        phase: "investigate",
+        approvalPolicy: "read-only",
+      }),
+    ).rejects.toThrow(
+      "Pairing Session session-1 belongs to provider provider-b, not configured provider provider-a",
+    );
+
+    expect(agent.runs).toBe(0);
+    expect(store.saves).toHaveLength(savesBeforeRun);
+  });
+
+  it("persists a provider failure as a blocked Pairing Session", async () => {
+    const store = new RecordingStore();
+    const coordinator = new PairingSessionCoordinator({
+      agent: new FailingAgent(new Error("provider connection closed during initialize")),
+      agentProviderId: "provider-a",
+      store,
+      identities: new FixedIdentity(),
+      clock: new IncrementingClock(),
+    });
+    const session = await coordinator.createSession({
+      specification: "Revoke a session",
+      workspaceRoot: "/repo",
+    });
+
+    const result = await coordinator.runAgent(session.id, {
+      phase: "investigate",
+      approvalPolicy: "read-only",
+    });
+
+    expect(result).toMatchObject({
+      status: "blocked",
+      blockedReason: "provider connection closed during initialize",
+    });
+    await expect(store.load(session.id)).resolves.toEqual(result);
+  });
+
+  it("restores the pre-phase session when the provider run is cancelled", async () => {
+    const store = new RecordingStore();
+    const coordinator = new PairingSessionCoordinator({
+      agent: new FailingAgent(new AgentRunCancelledError()),
+      agentProviderId: "provider-a",
+      store,
+      identities: new FixedIdentity(),
+      clock: new IncrementingClock(),
+    });
+    let session = await coordinator.createSession({
+      specification: "Revoke a session",
+      workspaceRoot: "/repo",
+    });
+    session = await coordinator.dispatch(session.id, { type: "investigation-started" });
+    session = await coordinator.dispatch(session.id, {
+      type: "change-proposed",
+      proposal: {
+        title: "Reject revoked sessions",
+        intent: "Prevent revoked sessions from authenticating",
+        rationale: "The existing lookup ignores revocation",
+        affectedFiles: [{ path: "src/session.ts" }],
+        risks: [],
+        evidence: [],
+        visualisations: [],
+        tests: [],
+      },
+    });
+    session = await coordinator.dispatch(session.id, {
+      type: "feedback-recorded",
+      changeId: "change-1",
+      feedback: { decision: "approve" },
+    });
+
+    await expect(
+      coordinator.runAgent(session.id, {
+        phase: "implement",
+        changeId: "change-1",
+        approvalPolicy: "workspace-write",
+      }),
+    ).rejects.toBeInstanceOf(AgentRunCancelledError);
+
+    expect(await store.load(session.id)).toEqual(session);
+    expect(store.saves.at(-1)?.changes[0]?.status).toBe("approved");
   });
 
   it("coordinates implementation, verification, summary, and understanding to convergence", async () => {
@@ -157,6 +265,7 @@ describe("PairingSessionCoordinator", () => {
     ]);
     const coordinator = new PairingSessionCoordinator({
       agent,
+      agentProviderId: "provider-a",
       store,
       identities: new FixedIdentity(),
       clock: new IncrementingClock(),
@@ -246,10 +355,12 @@ class RecordingStore implements PairingSessionStore {
 
 class RecordingAgent implements AgentPort {
   readonly responses: { requestId: string; decision: "approved" | "denied" }[] = [];
+  runs = 0;
 
   constructor(private readonly events: AgentEvent[]) {}
 
   async *run(_request: AgentRunRequest): AsyncIterable<AgentEvent> {
+    this.runs += 1;
     yield* this.events;
   }
 
@@ -259,6 +370,10 @@ class RecordingAgent implements AgentPort {
   ): Promise<void> {
     this.responses.push({ requestId, decision });
   }
+
+  async cancel(): Promise<void> {}
+
+  async dispose(): Promise<void> {}
 }
 
 class ScriptedAgent implements AgentPort {
@@ -269,4 +384,24 @@ class ScriptedAgent implements AgentPort {
     if (!events) throw new Error("No agent script available");
     yield* events;
   }
+
+  async respondToExecutionApproval(): Promise<void> {}
+
+  async cancel(): Promise<void> {}
+
+  async dispose(): Promise<void> {}
+}
+
+class FailingAgent implements AgentPort {
+  constructor(private readonly failure: Error) {}
+
+  async *run(_request: AgentRunRequest): AsyncIterable<AgentEvent> {
+    throw this.failure;
+  }
+
+  async respondToExecutionApproval(): Promise<void> {}
+
+  async cancel(): Promise<void> {}
+
+  async dispose(): Promise<void> {}
 }

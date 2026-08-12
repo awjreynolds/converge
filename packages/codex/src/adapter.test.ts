@@ -1,4 +1,4 @@
-import type { AgentRunRequest, PairingSession } from "@converge/core";
+import { AgentRunCancelledError, type AgentRunRequest, type PairingSession } from "@converge/core";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -59,6 +59,7 @@ const session = (overrides: Partial<PairingSession> = {}): PairingSession => ({
   id: "session-1",
   specification: "Prevent revoked sessions from authorizing requests.",
   workspaceRoot: "/workspace/converge-fixture",
+  agent: { providerId: "codex" },
   status: "draft",
   createdAt: "2026-08-12T00:00:00.000Z",
   updatedAt: "2026-08-12T00:00:00.000Z",
@@ -160,7 +161,7 @@ describe("CodexAppServerAdapter", () => {
     for await (const event of adapter.run(request())) events.push(event);
 
     expect(events).toEqual([
-      { type: "thread-started", threadId: "thread-1" },
+      { type: "conversation-started", conversationId: "thread-1" },
       { type: "progress", message: "Inspecting authorization flow" },
       {
         type: "proposal",
@@ -228,7 +229,7 @@ describe("CodexAppServerAdapter", () => {
         phase: "implement",
         approvalPolicy: "workspace-write",
         changeId: "change-1",
-        session: session({ agentThreadId: "thread-existing" }),
+        session: session({ agent: { providerId: "codex", conversationId: "thread-existing" } }),
       }),
     )[Symbol.asyncIterator]();
 
@@ -338,7 +339,7 @@ describe("CodexAppServerAdapter", () => {
 
     expect(await iterator.next()).toEqual({
       done: false,
-      value: { type: "thread-started", threadId: "thread-permissions" },
+      value: { type: "conversation-started", conversationId: "thread-permissions" },
     });
     expect(await iterator.next()).toEqual({
       done: false,
@@ -467,7 +468,7 @@ describe("CodexAppServerAdapter", () => {
     const iterator = adapter.run(request())[Symbol.asyncIterator]();
     expect(await iterator.next()).toEqual({
       done: false,
-      value: { type: "thread-started", threadId: "thread-unsupported" },
+      value: { type: "conversation-started", conversationId: "thread-unsupported" },
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(transport.sent).toContainEqual({
@@ -503,7 +504,7 @@ describe("CodexAppServerAdapter", () => {
     const iterator = adapter.run(request())[Symbol.asyncIterator]();
     expect(await iterator.next()).toEqual({
       done: false,
-      value: { type: "thread-started", threadId: "thread-1" },
+      value: { type: "conversation-started", conversationId: "thread-1" },
     });
 
     await adapter.cancel();
@@ -511,7 +512,7 @@ describe("CodexAppServerAdapter", () => {
       method: "turn/interrupt",
       params: { threadId: "thread-1", turnId: "turn-active" },
     });
-    expect(await iterator.next()).toEqual({ done: true, value: undefined });
+    await expect(iterator.next()).rejects.toBeInstanceOf(AgentRunCancelledError);
   });
 
   it("invalidates unresolved execution approvals when cancellation completes", async () => {
@@ -551,7 +552,7 @@ describe("CodexAppServerAdapter", () => {
     await iterator.next();
 
     await adapter.cancel();
-    expect(await iterator.next()).toEqual({ done: true, value: undefined });
+    await expect(iterator.next()).rejects.toBeInstanceOf(AgentRunCancelledError);
     await expect(
       adapter.respondToExecutionApproval("approval-cancelled", "approved"),
     ).rejects.toThrow("Unknown or already resolved");
@@ -596,8 +597,10 @@ describe("CodexAppServerAdapter", () => {
         params: { threadId: "thread-early-cancel", turnId: "turn-early-cancel" },
       }),
     );
-    await run;
-    expect(events).toEqual([{ type: "thread-started", threadId: "thread-early-cancel" }]);
+    await expect(run).rejects.toBeInstanceOf(AgentRunCancelledError);
+    expect(events).toEqual([
+      { type: "conversation-started", conversationId: "thread-early-cancel" },
+    ]);
   });
 
   it("fails subsequent runs with the original connection-loss error", async () => {
@@ -615,7 +618,7 @@ describe("CodexAppServerAdapter", () => {
     const iterator = adapter.run(request())[Symbol.asyncIterator]();
     expect(await iterator.next()).toEqual({
       done: false,
-      value: { type: "thread-started", threadId: "thread-lost" },
+      value: { type: "conversation-started", conversationId: "thread-lost" },
     });
 
     await transport.close();
@@ -671,7 +674,7 @@ describe("CodexAppServerAdapter", () => {
     for await (const event of replacement.run(
       request({
         phase: "summarize",
-        session: session({ agentThreadId: "thread-restarted" }),
+        session: session({ agent: { providerId: "codex", conversationId: "thread-restarted" } }),
       }),
     )) {
       events.push(event);

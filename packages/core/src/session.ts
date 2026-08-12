@@ -9,6 +9,7 @@ import type {
 export interface CreatePairingSessionInput {
   specification: string;
   workspaceRoot: string;
+  agent: { providerId: string };
 }
 
 export interface PairingSessionDependencies {
@@ -25,6 +26,7 @@ export function createPairingSession(
     id: dependencies.identities.nextSessionId(),
     specification: input.specification,
     workspaceRoot: input.workspaceRoot,
+    agent: input.agent,
     status: "draft",
     createdAt: now,
     updatedAt: now,
@@ -53,14 +55,24 @@ export function applySessionAction(
       requireSessionStatus(session, action.type, ["draft"]);
       return { ...session, status: "investigating", updatedAt: dependencies.clock.now() };
 
-    case "agent-thread-started":
+    case "agent-conversation-started":
       if (session.status === "converged") {
         throw invalid(action.type, "a converged Pairing Session is terminal");
       }
-      if (session.agentThreadId !== undefined && session.agentThreadId !== action.threadId) {
-        throw invalid(action.type, `agent thread is already ${session.agentThreadId}`);
+      if (
+        session.agent.conversationId !== undefined &&
+        session.agent.conversationId !== action.conversationId
+      ) {
+        throw invalid(
+          action.type,
+          `agent conversation is already ${session.agent.conversationId}`,
+        );
       }
-      return { ...session, agentThreadId: action.threadId, updatedAt: dependencies.clock.now() };
+      return {
+        ...session,
+        agent: { ...session.agent, conversationId: action.conversationId },
+        updatedAt: dependencies.clock.now(),
+      };
 
     case "progress-reported":
       if (session.status === "converged") {

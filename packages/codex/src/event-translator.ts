@@ -14,6 +14,7 @@ export interface ActiveTurnContext {
 export interface NotificationEffect {
   events: AgentEvent[];
   completed: boolean;
+  cancelled?: true;
   finalMessage?: string;
 }
 
@@ -110,7 +111,7 @@ export function translateNotification(
   if (message.method !== "turn/completed") return unchanged();
 
   const turn = asRecord(params.turn);
-  if (turn?.status === "interrupted") return { events: [], completed: true };
+  if (turn?.status === "interrupted") return { events: [], completed: true, cancelled: true };
   if (turn?.status === "failed") {
     const error = asRecord(turn.error);
     return {

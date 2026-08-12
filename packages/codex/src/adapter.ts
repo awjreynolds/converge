@@ -1,4 +1,9 @@
-import type { AgentEvent, AgentPort, AgentRunRequest } from "@converge/core";
+import {
+  AgentRunCancelledError,
+  type AgentEvent,
+  type AgentPort,
+  type AgentRunRequest,
+} from "@converge/core";
 
 import { AsyncQueue } from "./async-queue.js";
 import { asRecord } from "./decoding.js";
@@ -31,6 +36,7 @@ interface ActiveRun {
   turnReady: Promise<void>;
   resolveTurnReady: () => void;
   interruptPromise?: Promise<void>;
+  cancelled?: true;
   finalMessage?: string;
   queue: AsyncQueue<AgentEvent>;
 }
@@ -68,7 +74,7 @@ export class CodexAppServerAdapter implements AgentPort {
     }
     await this.#client.connect();
 
-    const threadId = request.session.agentThreadId
+    const threadId = request.session.agent.conversationId
       ? await this.#resumeThread(request)
       : await this.#startThread(request);
     const queue = new AsyncQueue<AgentEvent>();
@@ -86,7 +92,9 @@ export class CodexAppServerAdapter implements AgentPort {
     };
     this.#activeRun = active;
 
-    if (!request.session.agentThreadId) queue.push({ type: "thread-started", threadId });
+    if (!request.session.agent.conversationId) {
+      queue.push({ type: "conversation-started", conversationId: threadId });
+    }
 
     try {
       const turnResult = await this.#client.request("turn/start", {
@@ -111,6 +119,7 @@ export class CodexAppServerAdapter implements AgentPort {
       active.resolveTurnReady();
 
       for await (const event of queue) yield event;
+      if (active.cancelled) throw new AgentRunCancelledError("Codex turn was interrupted");
     } finally {
       active.resolveTurnReady();
       if (this.#activeRun === active) this.#activeRun = undefined;
@@ -183,7 +192,7 @@ export class CodexAppServerAdapter implements AgentPort {
   }
 
   async #resumeThread(request: AgentRunRequest): Promise<string> {
-    const requestedId = request.session.agentThreadId;
+    const requestedId = request.session.agent.conversationId;
     if (!requestedId) throw new Error("Cannot resume a Codex thread without an id.");
     const result = await this.#client.request("thread/resume", {
       threadId: requestedId,
@@ -227,6 +236,7 @@ export class CodexAppServerAdapter implements AgentPort {
     if (!active) return;
     const effect = translateNotification(message, active);
     if (effect.finalMessage !== undefined) active.finalMessage = effect.finalMessage;
+    if (effect.cancelled) active.cancelled = true;
     effect.events.forEach((event) => active.queue.push(event));
     if (effect.completed) {
       this.#approvals.clear();

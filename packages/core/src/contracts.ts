@@ -93,6 +93,11 @@ export interface UnderstandingCheck {
   explanation?: string;
 }
 
+export interface AgentIdentity {
+  providerId: string;
+  conversationId?: string;
+}
+
 export interface PairingSession {
   id: SessionId;
   specification: string;
@@ -100,7 +105,7 @@ export interface PairingSession {
   status: PairingSessionStatus;
   createdAt: string;
   updatedAt: string;
-  agentThreadId?: string;
+  agent: AgentIdentity;
   activeChangeId?: ChangeUnitId;
   changes: ChangeUnit[];
   progress: string[];
@@ -111,7 +116,7 @@ export interface PairingSession {
 
 export type SessionAction =
   | { type: "investigation-started" }
-  | { type: "agent-thread-started"; threadId: string }
+  | { type: "agent-conversation-started"; conversationId: string }
   | { type: "progress-reported"; message: string }
   | { type: "change-proposed"; changeId?: string; proposal: Omit<ChangeUnitRevision, "revision" | "proposedAt"> }
   | { type: "feedback-recorded"; changeId: string; feedback: Omit<HumanFeedback, "recordedAt"> }
@@ -139,7 +144,7 @@ export interface AgentRunRequest {
 
 export type AgentEvent =
   | { type: "progress"; message: string }
-  | { type: "thread-started"; threadId: string }
+  | { type: "conversation-started"; conversationId: string }
   | { type: "proposal"; changeId?: string; proposal: Omit<ChangeUnitRevision, "revision" | "proposedAt"> }
   | { type: "discussion"; changeId: string; message: string }
   | { type: "implementation"; changeId: string; evidence: Evidence[]; tests?: TestEvidence[] }
@@ -151,8 +156,16 @@ export type AgentEvent =
 
 export interface AgentPort {
   run(request: AgentRunRequest): AsyncIterable<AgentEvent>;
-  respondToExecutionApproval?(requestId: string, decision: "approved" | "denied"): Promise<void>;
-  dispose?(): Promise<void>;
+  cancel(): Promise<void>;
+  respondToExecutionApproval(requestId: string, decision: "approved" | "denied"): Promise<void>;
+  dispose(): Promise<void>;
+}
+
+export class AgentRunCancelledError extends Error {
+  constructor(message = "Agent run cancelled") {
+    super(message);
+    this.name = "AgentRunCancelledError";
+  }
 }
 
 export interface PairingSessionStore {

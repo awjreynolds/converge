@@ -11,16 +11,29 @@ import {
 
 const sessionStatuses = new Set<string>(PAIRING_SESSION_STATUSES);
 
+export interface PairingSessionDecodingOptions {
+  legacyProviderId: string;
+}
+
 export class JsonFilePairingSessionStore implements PairingSessionStore {
-  static forWorkspace(workspaceRoot: string): JsonFilePairingSessionStore {
-    return new JsonFilePairingSessionStore(join(workspaceRoot, ".converge", "sessions"));
+  static forWorkspace(
+    workspaceRoot: string,
+    decoding: PairingSessionDecodingOptions,
+  ): JsonFilePairingSessionStore {
+    return new JsonFilePairingSessionStore(
+      join(workspaceRoot, ".converge", "sessions"),
+      decoding,
+    );
   }
 
-  constructor(private readonly directory: string) {}
+  constructor(
+    private readonly directory: string,
+    private readonly decoding: PairingSessionDecodingOptions,
+  ) {}
 
   async load(sessionId: string): Promise<PairingSession | undefined> {
     try {
-      const session = await readSessionFile(this.filePath(sessionId));
+      const session = await readSessionFile(this.filePath(sessionId), this.decoding);
       if (session.id !== sessionId) {
         throw new Error(`Stored Pairing Session identity ${session.id} does not match ${sessionId}`);
       }
@@ -50,7 +63,7 @@ export class JsonFilePairingSessionStore implements PairingSessionStore {
     const sessions = await Promise.all(
       entries
         .filter((entry) => entry.endsWith(".json"))
-        .map((entry) => readSessionFile(join(this.directory, entry))),
+        .map((entry) => readSessionFile(join(this.directory, entry), this.decoding)),
     );
     return sessions.sort(
       (left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
@@ -62,7 +75,10 @@ export class JsonFilePairingSessionStore implements PairingSessionStore {
   }
 }
 
-async function readSessionFile(filePath: string): Promise<PairingSession> {
+async function readSessionFile(
+  filePath: string,
+  decoding: PairingSessionDecodingOptions,
+): Promise<PairingSession> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(await readFile(filePath, "utf8"));
@@ -72,10 +88,55 @@ async function readSessionFile(filePath: string): Promise<PairingSession> {
     }
     throw error;
   }
-  if (!isPairingSession(parsed)) {
-    throw new Error(`Invalid Pairing Session JSON in ${filePath}`);
+  try {
+    return normalizePairingSession(parsed, decoding);
+  } catch (error) {
+    throw new Error(`Invalid Pairing Session JSON in ${filePath}`, { cause: error });
   }
-  return parsed;
+}
+
+export function normalizePairingSession(
+  value: unknown,
+  options: PairingSessionDecodingOptions,
+): PairingSession {
+  if (options.legacyProviderId.trim().length === 0) {
+    throw new Error("A legacy provider identity is required to decode Pairing Sessions");
+  }
+  if (typeof value !== "object" || value === null) {
+    throw new Error("Pairing Session must be an object");
+  }
+  const candidate = value as Record<string, unknown>;
+  const hasGroupedIdentity = Object.hasOwn(candidate, "agent");
+  const hasLegacyConversation = Object.hasOwn(candidate, "agentThreadId");
+  if (hasGroupedIdentity && hasLegacyConversation) {
+    throw new Error("Pairing Session has both grouped agent identity and legacy agentThreadId");
+  }
+  if (Object.hasOwn(candidate, "agentProviderId") || Object.hasOwn(candidate, "agentConversationId")) {
+    throw new Error("Pairing Session has unsupported ungrouped agent identity fields");
+  }
+
+  let normalized: Record<string, unknown> = candidate;
+  if (!hasGroupedIdentity) {
+    const legacyConversationId = candidate.agentThreadId;
+    if (
+      legacyConversationId !== undefined &&
+      (typeof legacyConversationId !== "string" || legacyConversationId.length === 0)
+    ) {
+      throw new Error("Legacy Pairing Session agentThreadId must be a non-empty string");
+    }
+    const { agentThreadId: _legacyConversationId, ...withoutLegacyIdentity } = candidate;
+    normalized = {
+      ...withoutLegacyIdentity,
+      agent: {
+        providerId: options.legacyProviderId,
+        ...(typeof legacyConversationId === "string"
+          ? { conversationId: legacyConversationId }
+          : {}),
+      },
+    };
+  }
+  if (!isPairingSession(normalized)) throw new Error("Pairing Session shape is invalid");
+  return normalized;
 }
 
 function isPairingSession(value: unknown): value is PairingSession {
@@ -88,8 +149,20 @@ function isPairingSession(value: unknown): value is PairingSession {
     isSessionStatus(candidate.status) &&
     typeof candidate.createdAt === "string" &&
     typeof candidate.updatedAt === "string" &&
+    isAgentIdentity(candidate.agent) &&
     Array.isArray(candidate.changes) &&
     Array.isArray(candidate.progress)
+  );
+}
+
+function isAgentIdentity(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.providerId === "string" &&
+    candidate.providerId.length > 0 &&
+    (candidate.conversationId === undefined ||
+      (typeof candidate.conversationId === "string" && candidate.conversationId.length > 0))
   );
 }
 

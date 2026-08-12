@@ -66,6 +66,7 @@ export async function runRevokedSessionWalkthrough(): Promise<RevokedSessionWalk
     const agent = new RevokedSessionFakeAgent(workspaceRoot, testRuns);
     const coordinator = new PairingSessionCoordinator({
       agent,
+      agentProviderId: "fake-agent",
       store,
       identities: new WalkthroughIdentities(),
       clock: new WalkthroughClock(),
@@ -248,7 +249,10 @@ class RevokedSessionFakeAgent implements AgentPort {
       case "investigate":
         this.investigation += 1;
         if (this.investigation === 1) {
-          yield { type: "thread-started", threadId: "fake-agent-revoked-session" };
+          yield {
+            type: "conversation-started",
+            conversationId: "fake-agent-revoked-session",
+          };
           yield { type: "progress", message: "Located SessionService.refresh and SessionLookup." };
           yield {
             type: "proposal",
@@ -403,6 +407,12 @@ class RevokedSessionFakeAgent implements AgentPort {
         return;
     }
   }
+
+  async cancel(): Promise<void> {}
+
+  async respondToExecutionApproval(): Promise<void> {}
+
+  async dispose(): Promise<void> {}
 }
 
 async function runFixtureTests(

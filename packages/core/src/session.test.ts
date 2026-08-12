@@ -35,7 +35,11 @@ class SequenceClock implements Clock {
 describe("Pairing Session", () => {
   it("is created deterministically from injected identity and time sources", () => {
     const session = createPairingSession(
-      { specification: "Revoke a session", workspaceRoot: "/repo" },
+      {
+        specification: "Revoke a session",
+        workspaceRoot: "/repo",
+        agent: { providerId: "provider-a" },
+      },
       {
         identities: new SequenceIdentity(["session-fixed"]),
         clock: new SequenceClock(["2026-08-12T09:00:00.000Z"]),
@@ -46,6 +50,7 @@ describe("Pairing Session", () => {
       id: "session-fixed",
       specification: "Revoke a session",
       workspaceRoot: "/repo",
+      agent: { providerId: "provider-a" },
       status: "draft",
       createdAt: "2026-08-12T09:00:00.000Z",
       updatedAt: "2026-08-12T09:00:00.000Z",
@@ -69,7 +74,11 @@ describe("Pairing Session", () => {
       ]),
     };
     let session = createPairingSession(
-      { specification: "Revoke a session", workspaceRoot: "/repo" },
+      {
+        specification: "Revoke a session",
+        workspaceRoot: "/repo",
+        agent: { providerId: "provider-a" },
+      },
       dependencies,
     );
     session = applySessionAction(session, { type: "investigation-started" }, dependencies);
@@ -150,7 +159,11 @@ describe("Pairing Session", () => {
       ]),
     };
     let session = createPairingSession(
-      { specification: "Revoke a session", workspaceRoot: "/repo" },
+      {
+        specification: "Revoke a session",
+        workspaceRoot: "/repo",
+        agent: { providerId: "provider-a" },
+      },
       dependencies,
     );
     session = applySessionAction(session, { type: "investigation-started" }, dependencies);
@@ -291,7 +304,11 @@ describe("Pairing Session", () => {
     const expectedFailureProposal = proposal("Add the missing behavior test");
     const session: PairingSession = {
       ...createPairingSession(
-        { specification: "Add the missing behavior test", workspaceRoot: "/workspace" },
+        {
+          specification: "Add the missing behavior test",
+          workspaceRoot: "/workspace",
+          agent: { providerId: "provider-a" },
+        },
         dependencies,
       ),
       status: "investigating",
@@ -349,7 +366,11 @@ describe("Pairing Session", () => {
       ]),
     };
     let session = createPairingSession(
-      { specification: "Revoke a session", workspaceRoot: "/repo" },
+      {
+        specification: "Revoke a session",
+        workspaceRoot: "/repo",
+        agent: { providerId: "provider-a" },
+      },
       dependencies,
     );
     session = applySessionAction(session, { type: "investigation-started" }, dependencies);
@@ -404,6 +425,7 @@ function verifiedSession(): PairingSession {
     id: "session-1",
     specification: "Revoke a session",
     workspaceRoot: "/repo",
+    agent: { providerId: "provider-a" },
     status: "investigating",
     createdAt: "2026-08-12T09:00:00.000Z",
     updatedAt: "2026-08-12T10:00:00.000Z",

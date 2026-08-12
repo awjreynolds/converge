@@ -1,4 +1,4 @@
-import type { AgentRunRequest, PairingSession } from "@converge/core";
+import { AgentRunCancelledError, type AgentRunRequest, type PairingSession } from "@converge/core";
 import { describe, expect, it } from "vitest";
 
 import commandApprovalParams from "../protocol-snapshots/generated/CommandExecutionRequestApprovalParams.json" with { type: "json" };
@@ -86,21 +86,21 @@ class ConformanceTransport implements AppServerTransport {
   }
 }
 
-const session = (agentThreadId?: string): PairingSession => ({
+const session = (conversationId?: string): PairingSession => ({
   id: "session-conformance",
   specification: "Exercise the pinned protocol subset.",
   workspaceRoot: "/workspace/conformance",
+  agent: { providerId: "codex", ...(conversationId ? { conversationId } : {}) },
   status: "draft",
   createdAt: "2026-08-12T00:00:00.000Z",
   updatedAt: "2026-08-12T00:00:00.000Z",
   changes: [],
   progress: [],
-  ...(agentThreadId ? { agentThreadId } : {}),
 });
 
-const request = (agentThreadId?: string): AgentRunRequest => ({
+const request = (conversationId?: string): AgentRunRequest => ({
   phase: "investigate",
-  session: session(agentThreadId),
+  session: session(conversationId),
   approvalPolicy: "read-only",
 });
 
@@ -114,7 +114,7 @@ describe("pinned Codex app-server protocol schemas", () => {
     const run = consume(adapter.run(request(threadId)));
     await waitForMethod(transport, "turn/start");
     await adapter.cancel();
-    await run;
+    await expect(run).rejects.toBeInstanceOf(AgentRunCancelledError);
 
     for (const message of transport.sent) {
       if (!("method" in message) || message.method === "initialized") continue;

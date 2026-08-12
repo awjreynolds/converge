@@ -22,11 +22,14 @@ from `codex app-server generate-json-schema --experimental` at that pinned versi
 Conformance tests recursively validate outbound requests, inbound approval requests,
 and approval responses against that external contract.
 
-Persist every emitted `thread-started` ID in the provider-neutral `PairingSession.agentThreadId`
-field before the next phase. Command and file permission requests are emitted as
+Persist every emitted `conversation-started` ID in the provider-neutral
+`PairingSession.agent.conversationId` field before the next phase. The Codex adapter
+alone translates that identity to its wire-level `threadId`. Command and file
+permission requests are emitted as
 `execution-approval-requested`; answer them independently of Converge design
 approval with `respondToExecutionApproval`. Call `cancel()` to interrupt an active
-turn, and `dispose()` when the owning extension is deactivated.
+turn; an interrupted turn raises `AgentRunCancelledError` so the coordinator can
+restore the pre-phase session. Call `dispose()` when the owning extension is deactivated.
 
 ## Initial limits
 

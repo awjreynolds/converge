@@ -9,6 +9,7 @@ import type {
   PairingSessionStore,
   SessionAction,
 } from "./contracts.js";
+import { AgentRunCancelledError } from "./contracts.js";
 import {
   applySessionAction,
   createPairingSession,
@@ -28,6 +29,7 @@ export type DecideExecutionApproval = (
 
 export interface PairingSessionCoordinatorDependencies {
   agent: AgentPort;
+  agentProviderId: string;
   store: PairingSessionStore;
   identities: IdentitySource;
   clock: Clock;
@@ -46,8 +48,13 @@ export class PairingSessionCoordinator {
     };
   }
 
-  async createSession(input: CreatePairingSessionInput): Promise<PairingSession> {
-    const session = createPairingSession(input, this.modelDependencies);
+  async createSession(
+    input: Omit<CreatePairingSessionInput, "agent">,
+  ): Promise<PairingSession> {
+    const session = createPairingSession(
+      { ...input, agent: { providerId: this.dependencies.agentProviderId } },
+      this.modelDependencies,
+    );
     await this.dependencies.store.save(session);
     return session;
   }
@@ -59,11 +66,28 @@ export class PairingSessionCoordinator {
 
   async runAgent(sessionId: string, input: RunAgentInput): Promise<PairingSession> {
     let session = await this.loadRequired(sessionId);
+    this.requireConfiguredProvider(session);
+    const sessionBeforePhase = session;
     session = await this.preparePhase(session, input.phase, input.changeId);
 
     const request: AgentRunRequest = { ...input, session };
-    for await (const event of this.dependencies.agent.run(request)) {
-      session = await this.consumeEvent(session, input, event);
+    const events = this.dependencies.agent.run(request)[Symbol.asyncIterator]();
+    while (true) {
+      let next: IteratorResult<AgentEvent>;
+      try {
+        next = await events.next();
+      } catch (error) {
+        if (error instanceof AgentRunCancelledError) {
+          await this.dependencies.store.save(sessionBeforePhase);
+          throw error;
+        }
+        return this.transition(session, {
+          type: "session-blocked",
+          reason: providerFailureMessage(error),
+        });
+      }
+      if (next.done) break;
+      session = await this.consumeEvent(session, input, next.value);
     }
     return session;
   }
@@ -107,8 +131,11 @@ export class PairingSessionCoordinator {
     event: AgentEvent,
   ): Promise<PairingSession> {
     switch (event.type) {
-      case "thread-started":
-        return this.transition(session, { type: "agent-thread-started", threadId: event.threadId });
+      case "conversation-started":
+        return this.transition(session, {
+          type: "agent-conversation-started",
+          conversationId: event.conversationId,
+        });
       case "progress":
         return this.transition(session, { type: "progress-reported", message: event.message });
       case "proposal":
@@ -176,7 +203,7 @@ export class PairingSessionCoordinator {
     const decision = this.dependencies.decideExecutionApproval
       ? await this.dependencies.decideExecutionApproval(request)
       : "denied";
-    await this.dependencies.agent.respondToExecutionApproval?.(event.requestId, decision);
+    await this.dependencies.agent.respondToExecutionApproval(event.requestId, decision);
   }
 
   private async transition(session: PairingSession, action: SessionAction): Promise<PairingSession> {
@@ -190,9 +217,23 @@ export class PairingSessionCoordinator {
     if (!session) throw new Error(`Pairing Session ${sessionId} does not exist`);
     return session;
   }
+
+  private requireConfiguredProvider(session: PairingSession): void {
+    if (session.agent.providerId !== this.dependencies.agentProviderId) {
+      throw new Error(
+        `Pairing Session ${session.id} belongs to provider ${session.agent.providerId}, ` +
+          `not configured provider ${this.dependencies.agentProviderId}`,
+      );
+    }
+  }
 }
 
 function requireChangeId(phase: AgentPhase, changeId: string | undefined): string {
   if (changeId === undefined) throw new Error(`Agent phase ${phase} requires a Change Unit identity`);
   return changeId;
+}
+
+function providerFailureMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) return error.message;
+  return "The configured agent provider failed without an error message";
 }
