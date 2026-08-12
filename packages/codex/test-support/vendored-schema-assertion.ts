@@ -1,6 +1,6 @@
-import { asRecord } from "./decoding.js";
+import { asRecord } from "../src/decoding.js";
 
-export function matchesJsonSchema(value: unknown, schema: unknown): boolean {
+export function matchesVendoredSchema(value: unknown, schema: unknown): boolean {
   return validate(value, schema, schema);
 }
 
@@ -37,6 +37,13 @@ function validate(value: unknown, schemaValue: unknown, root: unknown): boolean 
       ? [schema.type]
       : [];
   if (types.length > 0 && !types.some((type) => matchesType(value, type))) return false;
+  if (typeof value === "string") {
+    if (typeof schema.minLength === "number" && value.length < schema.minLength) return false;
+    if (typeof schema.maxLength === "number" && value.length > schema.maxLength) return false;
+    if (typeof schema.pattern === "string" && !new RegExp(schema.pattern, "u").test(value)) {
+      return false;
+    }
+  }
 
   if (Array.isArray(value)) {
     if (schema.items !== undefined && !value.every((entry) => validate(entry, schema.items, root))) {

@@ -17,7 +17,7 @@ import {
   type AppServerTransport,
   type JsonRpcMessage,
 } from "./index.js";
-import { matchesJsonSchema } from "./json-schema-validator.js";
+import { matchesVendoredSchema } from "../test-support/vendored-schema-assertion.js";
 
 const clientRequestSchemas: Record<string, unknown> = {
   initialize: initializeParams,
@@ -120,7 +120,7 @@ describe("pinned Codex app-server protocol schemas", () => {
       if (!("method" in message) || message.method === "initialized") continue;
       const schema = clientRequestSchemas[message.method];
       expect(schema, `generated snapshot is missing ${message.method}`).toBeDefined();
-      expect(matchesJsonSchema(message.params, schema)).toBe(true);
+      expect(matchesVendoredSchema(message.params, schema)).toBe(true);
     }
     expect(transport.sent).toContainEqual(expect.objectContaining({ method: threadMethod }));
 
@@ -131,13 +131,22 @@ describe("pinned Codex app-server protocol schemas", () => {
       ...((turnStart && "params" in turnStart ? turnStart.params : {}) as Record<string, unknown>),
       sandboxPolicy: { type: "readOnly", networkAccess: "yes" },
     };
-    expect(matchesJsonSchema(invalidParams, turnStartParams)).toBe(false);
+    expect(matchesVendoredSchema(invalidParams, turnStartParams)).toBe(false);
+    expect(
+      matchesVendoredSchema(
+        {
+          ...((turnStart && "params" in turnStart ? turnStart.params : {}) as Record<string, unknown>),
+          effort: "",
+        },
+        turnStartParams,
+      ),
+    ).toBe(false);
 
     const outputSchema = (turnStart && "params" in turnStart
       ? (turnStart.params as Record<string, unknown>).outputSchema
       : undefined);
     expect(
-      matchesJsonSchema(
+      matchesVendoredSchema(
         {
           type: "summary",
           summary: "Implemented and verified.",
@@ -148,7 +157,7 @@ describe("pinned Codex app-server protocol schemas", () => {
       ),
     ).toBe(true);
     expect(
-      matchesJsonSchema(
+      matchesVendoredSchema(
         { type: "summary", summary: null, concepts: [], question: null },
         outputSchema,
       ),
@@ -197,9 +206,9 @@ describe("pinned Codex app-server protocol schemas", () => {
       response: { permissions: {}, scope: "turn" },
     },
   ])("deeply validates $method and Converge's denial response", ({ schema, params, responseSchema, response }) => {
-    expect(matchesJsonSchema(params, schema)).toBe(true);
-    expect(matchesJsonSchema(response, responseSchema)).toBe(true);
-    expect(matchesJsonSchema({ ...params, startedAtMs: "now" }, schema)).toBe(false);
+    expect(matchesVendoredSchema(params, schema)).toBe(true);
+    expect(matchesVendoredSchema(response, responseSchema)).toBe(true);
+    expect(matchesVendoredSchema({ ...params, startedAtMs: "now" }, schema)).toBe(false);
   });
 });
 

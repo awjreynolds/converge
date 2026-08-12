@@ -2,18 +2,14 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { PairingSession, PairingSessionStatus, PairingSessionStore } from "./contracts.js";
+import {
+  PAIRING_SESSION_STATUSES,
+  type PairingSession,
+  type PairingSessionStatus,
+  type PairingSessionStore,
+} from "./contracts.js";
 
-const sessionStatuses = new Set<PairingSessionStatus>([
-  "draft",
-  "investigating",
-  "awaiting-human",
-  "implementing",
-  "verifying",
-  "understanding",
-  "converged",
-  "blocked",
-]);
+const sessionStatuses = new Set<string>(PAIRING_SESSION_STATUSES);
 
 export class JsonFilePairingSessionStore implements PairingSessionStore {
   static forWorkspace(workspaceRoot: string): JsonFilePairingSessionStore {
@@ -98,7 +94,7 @@ function isPairingSession(value: unknown): value is PairingSession {
 }
 
 function isSessionStatus(value: unknown): value is PairingSessionStatus {
-  return typeof value === "string" && sessionStatuses.has(value as PairingSessionStatus);
+  return typeof value === "string" && sessionStatuses.has(value);
 }
 
 function safeFileName(sessionId: string): string {

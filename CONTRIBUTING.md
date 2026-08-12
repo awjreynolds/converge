@@ -13,6 +13,8 @@ Use Node.js 22 or newer. Keep the core independent of VS Code and Codex-specific
 
 `npm run verify` includes the approved dependency-license policy. Run `npm run audit` before changing dependencies; CI rejects moderate-or-higher advisories.
 
+The policy distinguishes distributable open-source dependencies from reviewed build-only tools. The official VSIX packager's platform signer binaries have a restrictive Microsoft tool license, are pinned explicitly, and must never be bundled into Converge runtime artifacts.
+
 ## Tests
 
 Tests belong at public seams:

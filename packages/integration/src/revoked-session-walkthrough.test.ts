@@ -16,7 +16,7 @@ describe("revoked-session fake-agent walkthrough", () => {
       verification: change.verificationTests.map((test) => test.outcome),
     }))).toEqual([
       {
-        title: "Specify revoked-session behavior",
+        title: "Specify revoked-session behavior at the existing service seam",
         status: "verified",
         verification: ["expected-failure"],
       },
@@ -38,11 +38,23 @@ describe("revoked-session fake-agent walkthrough", () => {
     });
     expect(result.sourceFixtureUnchanged).toBe(true);
     expect(result.temporaryWorkspaceRemoved).toBe(true);
+    expect(result.session.changes[0]).toMatchObject({
+      currentRevision: 2,
+      humanFeedback: [
+        { decision: "discuss" },
+        { decision: "redirect" },
+        { decision: "approve" },
+      ],
+      discussionReplies: [{ message: expect.stringContaining("SessionService") }],
+    });
     expect(formatWalkthrough(result)).toContain([
       "1. Investigated the revoked-session task.",
-      "2. Verified the regression test fails for the missing behavior (expected red).",
-      "3. Verified the implementation with the fixture's real test suite (green).",
-      "4. Completed the Understanding Check and converged.",
+      "2. Discussed the proposal, redirected it to the existing service seam, and reviewed revision 2.",
+      "3. Inspected the test-only Change Unit diff before verification.",
+      "4. Verified the regression test fails for the missing behavior (expected red).",
+      "5. Inspected the implementation Change Unit diff before verification.",
+      "6. Verified the implementation with the fixture's real test suite (green).",
+      "7. Completed the Understanding Check and converged.",
     ].join("\n"));
   });
 });

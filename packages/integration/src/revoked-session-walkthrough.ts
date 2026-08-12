@@ -50,6 +50,7 @@ export async function runRevokedSessionWalkthrough(): Promise<RevokedSessionWalk
   const temporaryRoot = await mkdtemp(join(repositoryRoot, ".converge-e2e-"));
   const workspaceRoot = join(temporaryRoot, "revoked-session");
   const testRuns: WalkthroughTestRun[] = [];
+  const transcript = ["Investigated the revoked-session task."];
   let session: PairingSession | undefined;
 
   try {
@@ -71,12 +72,43 @@ export async function runRevokedSessionWalkthrough(): Promise<RevokedSessionWalk
       phase: "investigate",
       approvalPolicy: "read-only",
     });
-    session = await approveAndRun(coordinator, session, "change-1");
+    await coordinator.dispatch(session.id, {
+      type: "feedback-recorded",
+      changeId: "change-1",
+      feedback: {
+        decision: "discuss",
+        message: "Can this behavior stay behind the existing SessionService seam?",
+      },
+    });
+    await coordinator.runAgent(session.id, {
+      phase: "discuss",
+      changeId: "change-1",
+      humanMessage: "Can this behavior stay behind the existing SessionService seam?",
+      approvalPolicy: "read-only",
+    });
+    await coordinator.dispatch(session.id, {
+      type: "feedback-recorded",
+      changeId: "change-1",
+      feedback: {
+        decision: "redirect",
+        message: "Keep the regression at the existing SessionService boundary.",
+      },
+    });
+    session = await coordinator.runAgent(session.id, {
+      phase: "revise",
+      changeId: "change-1",
+      humanMessage: "Keep the regression at the existing SessionService boundary.",
+      approvalPolicy: "read-only",
+    });
+    transcript.push(
+      "Discussed the proposal, redirected it to the existing service seam, and reviewed revision 2.",
+    );
+    session = await approveAndRun(coordinator, session, "change-1", transcript, "test-only");
     session = await coordinator.runAgent(session.id, {
       phase: "investigate",
       approvalPolicy: "read-only",
     });
-    session = await approveAndRun(coordinator, session, "change-2");
+    session = await approveAndRun(coordinator, session, "change-2", transcript, "implementation");
     session = await coordinator.runAgent(session.id, {
       phase: "summarize",
       approvalPolicy: "read-only",
@@ -97,9 +129,7 @@ export async function runRevokedSessionWalkthrough(): Promise<RevokedSessionWalk
     session,
     testRuns,
     transcript: [
-      "Investigated the revoked-session task.",
-      "Verified the regression test fails for the missing behavior (expected red).",
-      "Verified the implementation with the fixture's real test suite (green).",
+      ...transcript,
       "Completed the Understanding Check and converged.",
     ],
     sourceFixtureUnchanged: sourceBefore === await captureFiles(sourceFixture),
@@ -118,22 +148,36 @@ async function approveAndRun(
   coordinator: PairingSessionCoordinator,
   session: PairingSession,
   changeId: string,
+  transcript: string[],
+  kind: "test-only" | "implementation",
 ): Promise<PairingSession> {
   await coordinator.dispatch(session.id, {
     type: "feedback-recorded",
     changeId,
     feedback: { decision: "approve" },
   });
-  await coordinator.runAgent(session.id, {
+  const implemented = await coordinator.runAgent(session.id, {
     phase: "implement",
     changeId,
     approvalPolicy: "workspace-write",
   });
-  return coordinator.runAgent(session.id, {
+  const change = implemented.changes.find((candidate) => candidate.id === changeId);
+  const revision = change?.revisions[change.currentRevision - 1];
+  if (!revision?.evidence.some((evidence) => evidence.kind === "diff")) {
+    throw new Error(`Change Unit ${changeId} did not expose inspectable diff evidence`);
+  }
+  transcript.push(`Inspected the ${kind} Change Unit diff before verification.`);
+  const verified = await coordinator.runAgent(session.id, {
     phase: "verify",
     changeId,
     approvalPolicy: "workspace-write",
   });
+  transcript.push(
+    kind === "test-only"
+      ? "Verified the regression test fails for the missing behavior (expected red)."
+      : "Verified the implementation with the fixture's real test suite (green).",
+  );
+  return verified;
 }
 
 class RevokedSessionFakeAgent implements AgentPort {
@@ -271,8 +315,37 @@ class RevokedSessionFakeAgent implements AgentPort {
         return;
 
       case "discuss":
+        yield {
+          type: "discussion",
+          changeId: request.changeId ?? "",
+          message:
+            "Yes. The test uses SessionService.refresh and the existing SessionLookup interface; no new abstraction is needed.",
+        };
+        return;
+
       case "revise":
-        throw new Error(`The deterministic walkthrough does not use the ${request.phase} phase`);
+        if (request.changeId === undefined) {
+          throw new Error("The revise phase requires a Change Unit identity");
+        }
+        yield {
+          type: "proposal",
+          changeId: request.changeId,
+          proposal: {
+            title: "Specify revoked-session behavior at the existing service seam",
+            intent: "Add a behavioral regression test through SessionService.refresh.",
+            rationale: "The existing service boundary proves revocation without a new abstraction.",
+            affectedFiles: [{ path: "test/revoked-session.test.ts" }],
+            behaviouralImpact: "Documents that revoked sessions cannot refresh.",
+            architecturalImpact: "Keeps SessionService and SessionLookup as the established seams.",
+            risks: [],
+            evidence: [
+              { kind: "investigation", summary: "SessionService already owns refresh authorization." },
+            ],
+            visualisations: [],
+            tests: [],
+          },
+        };
+        return;
     }
   }
 }

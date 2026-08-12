@@ -72,15 +72,18 @@ export interface ChangeUnit {
   dependsOn: ChangeUnitId[];
 }
 
-export type PairingSessionStatus =
-  | "draft"
-  | "investigating"
-  | "awaiting-human"
-  | "implementing"
-  | "verifying"
-  | "understanding"
-  | "converged"
-  | "blocked";
+export const PAIRING_SESSION_STATUSES = [
+  "draft",
+  "investigating",
+  "awaiting-human",
+  "implementing",
+  "verifying",
+  "understanding",
+  "converged",
+  "blocked",
+] as const;
+
+export type PairingSessionStatus = (typeof PAIRING_SESSION_STATUSES)[number];
 
 export interface UnderstandingCheck {
   concepts: string[];
