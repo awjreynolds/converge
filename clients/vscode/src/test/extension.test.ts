@@ -22,6 +22,9 @@ export async function run(): Promise<void> {
     case "unsupported-pi":
       await reportsUnsupportedPiThroughPublicCommand();
       return;
+    case "missing-pi-authentication":
+      await reportsMissingPiAuthenticationThroughPublicCommand();
+      return;
     case "missing-authentication":
       await reportsMissingAuthenticationThroughPublicCommand();
       return;
@@ -43,12 +46,41 @@ async function selectsConfiguredProviderThroughActivatedExtension(): Promise<voi
   const active = await activateExtension();
   assert.equal(vscode.workspace.getConfiguration("converge").get("provider"), "pi");
   assert.equal(active.currentSnapshot()?.provider.id, "pi");
+  assert.deepEqual(
+    active.currentSnapshot()?.provider.capabilities.map(({ label, available }) => ({
+      label,
+      available,
+    })),
+    [
+      { label: "Structured output", available: true },
+      { label: "Session resume", available: true },
+      { label: "Cancellation", available: true },
+      { label: "Execution approval", available: true },
+      { label: "Network isolation", available: false },
+    ],
+  );
+  assert.ok(active.currentSnapshot()?.provider.limitations.some((item) => /gate extension/i.test(item)));
   assert.equal(active.currentSnapshot()?.workspaceTrusted, vscode.workspace.isTrusted);
 
   const commands = await vscode.commands.getCommands(true);
   assert.ok(commands.includes("converge.openPanel"));
   assert.ok(commands.includes("converge.startSession"));
   console.log("PASS activated production composition selects the configured provider");
+}
+
+async function reportsMissingPiAuthenticationThroughPublicCommand(): Promise<void> {
+  const active = await activateExtension();
+  const before = await sessionFiles();
+
+  await vscode.commands.executeCommand(
+    "converge.startSession",
+    "Validate Pi authentication without sending workspace content",
+  );
+
+  assert.match(active.currentSnapshot()?.notice?.message ?? "", /Pi authentication is not available/i);
+  assert.equal(active.currentSnapshot()?.busy, false);
+  assert.deepEqual(await sessionFiles(), before);
+  console.log("PASS public command publishes missing-Pi-authentication failure before persistence");
 }
 
 async function reportsMissingPiThroughPublicCommand(): Promise<void> {
@@ -134,11 +166,11 @@ async function reportsWorkspaceStateProviderMismatchThroughActivatedExtension():
   await active.host.writeSession(persisted);
   await active.controller.initialize();
 
-  assert.equal(active.currentSnapshot()?.provider.id, "claude");
+  assert.equal(active.currentSnapshot()?.provider.id, "pi");
   assert.equal(active.currentSnapshot()?.session, undefined);
   assert.match(
     active.currentSnapshot()?.notice?.message ?? "",
-    /belongs to provider codex, not configured provider claude/,
+    /belongs to provider codex, not configured provider pi/,
   );
   console.log("PASS activated production composition diagnoses workspaceState provider mismatch");
 }
