@@ -77,6 +77,17 @@ describe("PiRpcTransport", () => {
     await expect(transport.validate()).rejects.toThrow("Pi executable");
   });
 
+  it("rejects unsupported Pi CLI versions before starting RPC", async () => {
+    let launched = false;
+    const transport = new PiRpcTransport({
+      executablePath: process.execPath,
+      supportedCliVersion: "0.84.1",
+      connectionFactory: async () => { launched = true; return new ReactiveConnection(() => {}); },
+    });
+    await expect(transport.validate()).rejects.toThrow(`Unsupported Pi CLI version ${process.versions.node}; Converge supports 0.84.1`);
+    expect(launched).toBe(false);
+  });
+
   it("launches a restricted read-only RPC process and waits for agent_settled", async () => {
     const launches: PiRpcLaunch[] = [];
     const connection = successfulRunConnection();

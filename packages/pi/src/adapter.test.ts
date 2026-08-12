@@ -52,4 +52,17 @@ describe("PiAgentAdapter", () => {
     for await (const event of adapter.run(request())) events.push(event);
     expect(events).toEqual([{ type: "error", message: "Pi proposal must be an object." }]);
   });
+
+  it.each([
+    { phase: "discuss" as const, value: { type: "discussion", changeId: "change-1", message: "Use the lookup boundary." } },
+    { phase: "implement" as const, value: { type: "implementation", changeId: "change-1", evidence: [], tests: [] } },
+    { phase: "verify" as const, value: { type: "verification", changeId: "change-1", tests: [], evidence: [] } },
+    { phase: "summarize" as const, value: { type: "summary", summary: "Done", concepts: ["revocation"], question: "Where?" } },
+    { phase: "assess-understanding" as const, value: { type: "understanding-assessment", assessment: "aligned", explanation: "Correct." } },
+  ])("maps $phase structured output through AgentPort", async ({ phase, value }) => {
+    const adapter = new PiAgentAdapter({ transport: new RecordingTransport([{ type: "structured-result", value }]) });
+    const events = [];
+    for await (const event of adapter.run({ ...request(), phase })) events.push(event);
+    expect(events).toEqual([value]);
+  });
 });
