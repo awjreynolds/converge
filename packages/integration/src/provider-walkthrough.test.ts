@@ -16,6 +16,12 @@ import {
   type ClaudeTransportEvent,
   type ClaudeTransportRunRequest,
 } from "@converge/claude";
+import {
+  PiAgentAdapter,
+  type PiTransport,
+  type PiTransportEvent,
+  type PiTransportRunRequest,
+} from "@converge/pi";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -43,6 +49,13 @@ const providers: RevokedSessionWalkthroughProvider[] = [
     createAgent: (context) =>
       new ClaudeAgentAdapter({
         transport: new WalkthroughClaudeTransport(createScript("claude", context)),
+      }),
+  },
+  {
+    providerId: "pi",
+    createAgent: (context) =>
+      new PiAgentAdapter({
+        transport: new WalkthroughPiTransport(createScript("pi", context)),
       }),
   },
 ];
@@ -161,6 +174,42 @@ class WalkthroughClaudeTransport implements ClaudeTransport {
       };
     } else if (request.resume !== "claude-walkthrough-conversation") {
       yield { type: "error", message: "Claude walkthrough did not resume its conversation." };
+      return;
+    }
+    const events = await this.script.next();
+    for (const event of events) {
+      if (event.type === "progress") yield event;
+      else if (event.type === "conversation-started") continue;
+      else {
+        yield {
+          type: "structured-result",
+          value:
+            event.type === "implementation"
+              ? { ...event, tests: event.tests ?? [] }
+              : event.type === "verification"
+                ? { ...event, evidence: event.evidence ?? [] }
+                : event,
+        };
+      }
+    }
+  }
+
+  async cancel(): Promise<void> {}
+  async respondToExecutionApproval(): Promise<void> {}
+  async dispose(): Promise<void> {}
+}
+
+class WalkthroughPiTransport implements PiTransport {
+  #started = false;
+
+  constructor(private readonly script: WalkthroughScript) {}
+
+  async *run(request: PiTransportRunRequest): AsyncIterable<PiTransportEvent> {
+    if (!this.#started) {
+      this.#started = true;
+      yield { type: "conversation-started", conversationId: "pi-walkthrough-conversation" };
+    } else if (request.resume !== "pi-walkthrough-conversation") {
+      yield { type: "error", message: "Pi walkthrough did not resume its conversation." };
       return;
     }
     const events = await this.script.next();
