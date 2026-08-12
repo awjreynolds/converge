@@ -1,0 +1,17 @@
+{
+  "name": "@converge/claude",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./test-support": "./test-support/index.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.228",
+    "@converge/core": "*"
+  },
+  "devDependencies": {
+    "@converge/agent-test-support": "*"
+  }
+}
