@@ -17,9 +17,10 @@ The default executable is `codex` from `PATH`. The adapter currently requires
 `codex-cli 0.147.0-alpha.6.5`, the version against which its stable protocol subset
 was generated and tested. A caller may explicitly select another pinned version
 with `supportedCliVersion` while validating an updated app-server protocol.
-The compact generated snapshot in `protocol-snapshots/` records the permitted and
-required fields for every client request Converge sends. Its conformance test keeps
-that pinned external contract independent from the adapter implementation.
+The generated schemas in `protocol-snapshots/generated/` are the relevant files
+from `codex app-server generate-json-schema --experimental` at that pinned version.
+Conformance tests recursively validate outbound requests, inbound approval requests,
+and approval responses against that external contract.
 
 Persist every emitted `thread-started` ID in the provider-neutral `PairingSession.agentThreadId`
 field before the next phase. Command and file permission requests are emitted as

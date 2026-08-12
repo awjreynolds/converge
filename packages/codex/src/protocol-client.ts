@@ -4,6 +4,7 @@ import {
   type JsonRpcId,
   type JsonRpcMessage,
 } from "./protocol.js";
+import { asError } from "./decoding.js";
 
 interface ProtocolClientHandlers {
   onServerRequest(message: { id: JsonRpcId; method: string; params?: unknown }): Promise<void>;
@@ -132,8 +133,4 @@ function protocolError(
   return new Error(
     `Codex app-server request ${String(id)} failed [${code}]: ${error.message}${detail}`,
   );
-}
-
-function asError(value: unknown, prefix: string): Error {
-  return value instanceof Error ? value : new Error(`${prefix}: ${String(value)}`);
 }

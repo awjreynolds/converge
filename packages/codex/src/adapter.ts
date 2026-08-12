@@ -1,6 +1,7 @@
 import type { AgentEvent, AgentPort, AgentRunRequest } from "@converge/core";
 
 import { AsyncQueue } from "./async-queue.js";
+import { asRecord } from "./decoding.js";
 import {
   readApprovalRequest,
   translateNotification,
@@ -27,6 +28,9 @@ interface ActiveRun {
   phase: AgentRunRequest["phase"];
   changeId?: string;
   turnId?: string;
+  turnReady: Promise<void>;
+  resolveTurnReady: () => void;
+  interruptPromise?: Promise<void>;
   finalMessage?: string;
   queue: AsyncQueue<AgentEvent>;
 }
@@ -68,10 +72,16 @@ export class CodexAppServerAdapter implements AgentPort {
       ? await this.#resumeThread(request)
       : await this.#startThread(request);
     const queue = new AsyncQueue<AgentEvent>();
+    let resolveTurnReady = (): void => undefined;
+    const turnReady = new Promise<void>((resolve) => {
+      resolveTurnReady = resolve;
+    });
     const active: ActiveRun = {
       threadId,
       phase: request.phase,
       ...(request.changeId === undefined ? {} : { changeId: request.changeId }),
+      turnReady,
+      resolveTurnReady,
       queue,
     };
     this.#activeRun = active;
@@ -98,19 +108,23 @@ export class CodexAppServerAdapter implements AgentPort {
         outputSchema: outputSchemaFor(request.phase),
       });
       active.turnId = readTurnId(turnResult);
+      active.resolveTurnReady();
 
       for await (const event of queue) yield event;
     } finally {
+      active.resolveTurnReady();
       if (this.#activeRun === active) this.#activeRun = undefined;
     }
   }
 
   async dispose(): Promise<void> {
     if (this.#disposed) return;
-    try {
-      await this.cancel();
-    } catch {
-      // The process may already be unavailable; closing it is still required.
+    if (this.#activeRun?.turnId) {
+      try {
+        await this.cancel();
+      } catch {
+        // The process may already be unavailable; closing it is still required.
+      }
     }
     this.#disposed = true;
     this.#approvals.clear();
@@ -120,11 +134,16 @@ export class CodexAppServerAdapter implements AgentPort {
 
   async cancel(): Promise<void> {
     const active = this.#activeRun;
-    if (!active?.turnId) return;
-    await this.#client.request("turn/interrupt", {
-      threadId: active.threadId,
-      turnId: active.turnId,
-    });
+    if (!active) return;
+    active.interruptPromise ??= (async () => {
+      await active.turnReady;
+      if (!active.turnId) return;
+      await this.#client.request("turn/interrupt", {
+        threadId: active.threadId,
+        turnId: active.turnId,
+      });
+    })();
+    await active.interruptPromise;
   }
 
   async respondToExecutionApproval(
@@ -232,10 +251,4 @@ function readTurnId(value: unknown): string {
   const turn = asRecord(asRecord(value)?.turn);
   if (typeof turn?.id !== "string") throw new Error("turn/start response did not include turn.id.");
   return turn.id;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
 }

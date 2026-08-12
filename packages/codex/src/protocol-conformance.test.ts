@@ -1,18 +1,30 @@
 import type { AgentRunRequest, PairingSession } from "@converge/core";
 import { describe, expect, it } from "vitest";
 
-import snapshot from "../protocol-snapshots/app-server-0.147.0-alpha.6.5.json" with {
-  type: "json",
-};
+import commandApprovalParams from "../protocol-snapshots/generated/CommandExecutionRequestApprovalParams.json" with { type: "json" };
+import commandApprovalResponse from "../protocol-snapshots/generated/CommandExecutionRequestApprovalResponse.json" with { type: "json" };
+import fileApprovalParams from "../protocol-snapshots/generated/FileChangeRequestApprovalParams.json" with { type: "json" };
+import fileApprovalResponse from "../protocol-snapshots/generated/FileChangeRequestApprovalResponse.json" with { type: "json" };
+import permissionsApprovalParams from "../protocol-snapshots/generated/PermissionsRequestApprovalParams.json" with { type: "json" };
+import permissionsApprovalResponse from "../protocol-snapshots/generated/PermissionsRequestApprovalResponse.json" with { type: "json" };
+import initializeParams from "../protocol-snapshots/generated/v1/InitializeParams.json" with { type: "json" };
+import threadResumeParams from "../protocol-snapshots/generated/v2/ThreadResumeParams.json" with { type: "json" };
+import threadStartParams from "../protocol-snapshots/generated/v2/ThreadStartParams.json" with { type: "json" };
+import turnInterruptParams from "../protocol-snapshots/generated/v2/TurnInterruptParams.json" with { type: "json" };
+import turnStartParams from "../protocol-snapshots/generated/v2/TurnStartParams.json" with { type: "json" };
 import {
   CodexAppServerAdapter,
   type AppServerTransport,
   type JsonRpcMessage,
 } from "./index.js";
+import { matchesJsonSchema } from "./json-schema-validator.js";
 
-type ProtocolShape = {
-  required: string[];
-  properties: string[];
+const clientRequestSchemas: Record<string, unknown> = {
+  initialize: initializeParams,
+  "thread/start": threadStartParams,
+  "thread/resume": threadResumeParams,
+  "turn/start": turnStartParams,
+  "turn/interrupt": turnInterruptParams,
 };
 
 class ConformanceTransport implements AppServerTransport {
@@ -22,7 +34,7 @@ class ConformanceTransport implements AppServerTransport {
   closed = false;
 
   async readCliVersion(): Promise<string> {
-    return `codex-cli ${snapshot.cliVersion}`;
+    return "codex-cli 0.147.0-alpha.6.5";
   }
 
   async start(): Promise<void> {}
@@ -92,43 +104,109 @@ const request = (agentThreadId?: string): AgentRunRequest => ({
   approvalPolicy: "read-only",
 });
 
-describe("pinned Codex app-server protocol subset", () => {
+describe("pinned Codex app-server protocol schemas", () => {
   it.each([
     [undefined, "thread/start"],
     ["thread-conformance", "thread/resume"],
-  ] as const)("conforms outbound messages when the persisted thread is %s", async (threadId, threadMethod) => {
+  ] as const)("deeply validates outbound messages when persisted thread is %s", async (threadId, threadMethod) => {
     const transport = new ConformanceTransport();
     const adapter = new CodexAppServerAdapter({ transport });
-    const run = (async () => {
-      for await (const _event of adapter.run(request(threadId))) {
-        // The protocol messages are the observable result for this conformance test.
-      }
-    })();
+    const run = consume(adapter.run(request(threadId)));
     await waitForMethod(transport, "turn/start");
     await adapter.cancel();
     await run;
 
     for (const message of transport.sent) {
-      if (!("method" in message)) continue;
-      if (message.method === "initialized") continue;
-      const shape = snapshot.clientRequests[
-        message.method as keyof typeof snapshot.clientRequests
-      ] as ProtocolShape | undefined;
-      expect(shape, `snapshot is missing ${message.method}`).toBeDefined();
-      expect(message).toHaveProperty("id");
-      expect(message.params).toSatisfy((params: unknown) => conforms(params, shape!));
+      if (!("method" in message) || message.method === "initialized") continue;
+      const schema = clientRequestSchemas[message.method];
+      expect(schema, `generated snapshot is missing ${message.method}`).toBeDefined();
+      expect(matchesJsonSchema(message.params, schema)).toBe(true);
     }
     expect(transport.sent).toContainEqual(expect.objectContaining({ method: threadMethod }));
+
+    const turnStart = transport.sent.find(
+      (message) => "method" in message && message.method === "turn/start",
+    );
+    const invalidParams = {
+      ...((turnStart && "params" in turnStart ? turnStart.params : {}) as Record<string, unknown>),
+      sandboxPolicy: { type: "readOnly", networkAccess: "yes" },
+    };
+    expect(matchesJsonSchema(invalidParams, turnStartParams)).toBe(false);
+
+    const outputSchema = (turnStart && "params" in turnStart
+      ? (turnStart.params as Record<string, unknown>).outputSchema
+      : undefined);
+    expect(
+      matchesJsonSchema(
+        {
+          type: "summary",
+          summary: "Implemented and verified.",
+          concepts: ["verification"],
+          question: "Where is the behavior enforced?",
+        },
+        outputSchema,
+      ),
+    ).toBe(true);
+    expect(
+      matchesJsonSchema(
+        { type: "summary", summary: null, concepts: [], question: null },
+        outputSchema,
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    {
+      method: "item/commandExecution/requestApproval",
+      schema: commandApprovalParams,
+      params: {
+        threadId: "thread-conformance",
+        turnId: "turn-conformance",
+        itemId: "command-1",
+        startedAtMs: 1,
+        command: "npm test",
+      },
+      responseSchema: commandApprovalResponse,
+      response: { decision: "decline" },
+    },
+    {
+      method: "item/fileChange/requestApproval",
+      schema: fileApprovalParams,
+      params: {
+        threadId: "thread-conformance",
+        turnId: "turn-conformance",
+        itemId: "file-1",
+        startedAtMs: 1,
+        grantRoot: "/workspace/conformance",
+      },
+      responseSchema: fileApprovalResponse,
+      response: { decision: "decline" },
+    },
+    {
+      method: "item/permissions/requestApproval",
+      schema: permissionsApprovalParams,
+      params: {
+        threadId: "thread-conformance",
+        turnId: "turn-conformance",
+        itemId: "permissions-1",
+        startedAtMs: 1,
+        cwd: "/workspace/conformance",
+        permissions: { network: { enabled: true } },
+      },
+      responseSchema: permissionsApprovalResponse,
+      response: { permissions: {}, scope: "turn" },
+    },
+  ])("deeply validates $method and Converge's denial response", ({ schema, params, responseSchema, response }) => {
+    expect(matchesJsonSchema(params, schema)).toBe(true);
+    expect(matchesJsonSchema(response, responseSchema)).toBe(true);
+    expect(matchesJsonSchema({ ...params, startedAtMs: "now" }, schema)).toBe(false);
   });
 });
 
-function conforms(value: unknown, shape: ProtocolShape): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const keys = Object.keys(value);
-  return (
-    shape.required.every((required) => keys.includes(required)) &&
-    keys.every((key) => shape.properties.includes(key))
-  );
+async function consume(events: AsyncIterable<unknown>): Promise<void> {
+  for await (const _event of events) {
+    // The validated protocol messages are the observable result.
+  }
 }
 
 async function waitForMethod(transport: ConformanceTransport, method: string): Promise<void> {

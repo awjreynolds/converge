@@ -191,8 +191,10 @@ describe("CodexAppServerAdapter", () => {
         approvalsReviewer: "user",
         sandboxPolicy: { type: "readOnly", networkAccess: false },
         outputSchema: {
-          type: "object",
-          properties: { type: { enum: ["proposal", "summary"] } },
+          oneOf: [
+            { properties: { type: { const: "proposal" } } },
+            { properties: { type: { const: "summary" } } },
+          ],
         },
       },
     });
@@ -555,6 +557,49 @@ describe("CodexAppServerAdapter", () => {
     ).rejects.toThrow("Unknown or already resolved");
   });
 
+  it("interrupts a turn when cancellation arrives before turn/start responds", async () => {
+    let releaseTurnStart: (() => void) | undefined;
+    const transport = new ScriptedTransport(undefined, (message, fake) => {
+      if (!("id" in message) || !("method" in message)) return;
+      if (message.method === "initialize") fake.push({ id: message.id, result: {} });
+      if (message.method === "thread/start") {
+        fake.push({ id: message.id, result: { thread: { id: "thread-early-cancel" } } });
+      }
+      if (message.method === "turn/start") {
+        releaseTurnStart = () =>
+          fake.push({ id: message.id, result: { turn: { id: "turn-early-cancel" } } });
+      }
+      if (message.method === "turn/interrupt") {
+        fake.push({ id: message.id, result: {} });
+        fake.push({
+          method: "turn/completed",
+          params: {
+            threadId: "thread-early-cancel",
+            turn: { id: "turn-early-cancel", status: "interrupted" },
+          },
+        });
+      }
+    });
+    const adapter = new CodexAppServerAdapter({ transport });
+    const events: unknown[] = [];
+    const run = (async () => {
+      for await (const event of adapter.run(request())) events.push(event);
+    })();
+    await waitForSentMethod(transport, "turn/start");
+
+    const cancellation = adapter.cancel();
+    releaseTurnStart?.();
+    await cancellation;
+    expect(transport.sent).toContainEqual(
+      expect.objectContaining({
+        method: "turn/interrupt",
+        params: { threadId: "thread-early-cancel", turnId: "turn-early-cancel" },
+      }),
+    );
+    await run;
+    expect(events).toEqual([{ type: "thread-started", threadId: "thread-early-cancel" }]);
+  });
+
   it("fails subsequent runs with the original connection-loss error", async () => {
     const transport = new ScriptedTransport(undefined, (message, fake) => {
       if (!("id" in message) || !("method" in message)) return;
@@ -746,3 +791,14 @@ describe("CodexAppServerAdapter", () => {
     });
   });
 });
+
+async function waitForSentMethod(
+  transport: ScriptedTransport,
+  method: string,
+): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (transport.sent.some((message) => "method" in message && message.method === method)) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error(`Adapter did not send ${method}.`);
+}

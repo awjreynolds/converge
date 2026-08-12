@@ -1,5 +1,6 @@
 import type { AgentEvent, AgentRunRequest } from "@converge/core";
 
+import { asError, asRecord } from "./decoding.js";
 import type { JsonRpcId } from "./protocol.js";
 import { parseAgentEvent } from "./structured-output.js";
 
@@ -171,14 +172,4 @@ function withEvent(event: AgentEvent): NotificationEffect {
 
 function unchanged(): NotificationEffect {
   return { events: [], completed: false };
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function asError(value: unknown, prefix: string): Error {
-  return value instanceof Error ? value : new Error(`${prefix}: ${String(value)}`);
 }

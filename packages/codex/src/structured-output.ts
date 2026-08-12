@@ -6,24 +6,18 @@ import type {
   TestEvidence,
 } from "@converge/core";
 
+import { asRecord } from "./decoding.js";
+
 const EVIDENCE_KINDS = ["investigation", "diff", "command", "test", "verification"] as const;
 const TEST_OUTCOMES = ["passed", "failed", "expected-failure"] as const;
 
 export function outputSchemaFor(phase: AgentRunRequest["phase"]): Record<string, unknown> {
-  const common = { type: "object", additionalProperties: false };
   if (phase === "investigate") {
     return {
-      ...common,
-      required: ["type", "proposal", "summary", "concepts", "question"],
-      properties: {
-        type: { enum: ["proposal", "summary"] },
-        proposal: { anyOf: [revisionSchema(), { type: "null" }] },
-        summary: { type: ["string", "null"] },
-        concepts: { type: "array", items: { type: "string" } },
-        question: { type: ["string", "null"] },
-      },
+      oneOf: [proposalOutputSchema(), summaryOutputSchema()],
     };
   }
+  const common = { type: "object", additionalProperties: false };
   if (phase === "revise") return proposalOutputSchema();
   if (phase === "discuss") {
     return {
@@ -341,10 +335,4 @@ function parseTests(value: unknown): TestEvidence[] {
       summary: requiredString(record, "summary"),
     };
   });
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
 }
