@@ -56,7 +56,15 @@ export class JsonFilePairingSessionStore implements PairingSessionStore {
 }
 
 async function readSessionFile(filePath: string): Promise<PairingSession> {
-  const parsed: unknown = JSON.parse(await readFile(filePath, "utf8"));
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readFile(filePath, "utf8"));
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new Error(`Invalid Pairing Session JSON in ${filePath}`, { cause: error });
+    }
+    throw error;
+  }
   if (!isPairingSession(parsed)) {
     throw new Error(`Invalid Pairing Session JSON in ${filePath}`);
   }

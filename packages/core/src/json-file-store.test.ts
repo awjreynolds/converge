@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -29,6 +29,20 @@ describe("JsonFilePairingSessionStore", () => {
       await readFile(join(workspace, ".converge", "sessions", "session-1.json"), "utf8"),
     ) as PairingSession;
     expect(stored).toEqual(exampleSession());
+  });
+
+  it("reports the corrupt session file when persisted JSON cannot be parsed", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "converge-core-"));
+    directories.push(workspace);
+    const sessionsDirectory = join(workspace, ".converge", "sessions");
+    await mkdir(sessionsDirectory, { recursive: true });
+    await writeFile(join(sessionsDirectory, "session-1.json"), "{not-json", "utf8");
+
+    const store = JsonFilePairingSessionStore.forWorkspace(workspace);
+
+    await expect(store.load("session-1")).rejects.toThrow(
+      /Invalid Pairing Session JSON in .*session-1\.json/,
+    );
   });
 });
 
