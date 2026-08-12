@@ -22,10 +22,10 @@ The happy-path test must pass. There is deliberately no revoked-session test yet
 4. Inspect the agent's investigation progress and first proposed Change Unit.
 5. Discuss the proposed behaviour if its rationale is unclear.
 6. Redirect any proposal that bypasses `SessionLookup`; require the existing persistence seam to remain intact.
-7. Approve the revised Change Unit, then choose **Apply approved change**. Treat any Codex command or file approval as a separate execution decision.
+7. Approve the revised Change Unit, then choose **Apply approved change**. Treat any provider command or file approval as a separate execution decision.
 8. Inspect the resulting files with **View Diff** in VS Code.
 9. Choose **Run verification**. A test-only Change Unit may report **expected failure**; the implementation Change Unit must pass.
-10. Choose **Next Change Unit** after each verified or rejected unit. Codex either proposes the next meaningful decision or, once every requirement is verified, presents the final system model and Understanding Check.
+10. Choose **Next Change Unit** after each verified or rejected unit. The selected provider either proposes the next meaningful decision or, once every requirement is verified, presents the final system model and Understanding Check.
 
 ## Expected result
 

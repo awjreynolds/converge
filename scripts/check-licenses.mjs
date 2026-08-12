@@ -43,6 +43,21 @@ const reviewedRestrictedBuildTools = new Set([
   "@vscode/vsce-sign-win32-x64@2.0.6",
 ]);
 
+// This optional runtime integration is selected explicitly by the user and is
+// governed by Anthropic's Commercial Terms rather than Converge's MIT license.
+// Keep the exception exact so a version or metadata change requires a new review.
+const reviewedRestrictedProviderRuntimes = new Map([
+  ["@anthropic-ai/claude-agent-sdk@0.3.228", { license: "SEE LICENSE IN README.md", optional: false }],
+  ["@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.228", { license: "SEE LICENSE IN LICENSE.md", optional: true }],
+  ["@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.228", { license: "SEE LICENSE IN LICENSE.md", optional: true }],
+  ["@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.228", { license: "SEE LICENSE IN LICENSE.md", optional: true }],
+  ["@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.228", { license: "SEE LICENSE IN LICENSE.md", optional: true }],
+  ["@anthropic-ai/claude-agent-sdk-linux-x64@0.3.228", { license: "SEE LICENSE IN LICENSE.md", optional: true }],
+  ["@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.228", { license: "SEE LICENSE IN LICENSE.md", optional: true }],
+  ["@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.228", { license: "SEE LICENSE IN LICENSE.md", optional: true }],
+  ["@anthropic-ai/claude-agent-sdk-win32-x64@0.3.228", { license: "SEE LICENSE IN LICENSE.md", optional: true }],
+]);
+
 const lock = JSON.parse(await readFile(new URL("../package-lock.json", import.meta.url), "utf8"));
 const rejected = [];
 let checked = 0;
@@ -60,6 +75,18 @@ for (const [path, entry] of Object.entries(lock.packages)) {
   if (reviewedRestrictedBuildTools.has(key)) {
     if (!entry.dev || entry.license !== "SEE LICENSE IN LICENSE.txt") {
       rejected.push(`${key}: restricted build-tool classification changed`);
+    }
+    continue;
+  }
+
+  const reviewedProviderRuntime = reviewedRestrictedProviderRuntimes.get(key);
+  if (reviewedProviderRuntime !== undefined) {
+    if (
+      entry.dev ||
+      entry.license !== reviewedProviderRuntime.license ||
+      Boolean(entry.optional) !== reviewedProviderRuntime.optional
+    ) {
+      rejected.push(`${key}: restricted provider-runtime classification changed`);
     }
     continue;
   }

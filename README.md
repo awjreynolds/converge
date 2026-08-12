@@ -4,7 +4,7 @@
 
 Converge is an open-source pair-programming and comprehension harness for AI coding agents. Its first client is a VS Code extension that presents meaningful implementation decisions as Change Units with concise rationale, optional Mermaid diagrams, native diffs, human feedback, verification evidence, and a final Understanding Check.
 
-Converge is not a general-purpose coding agent, Pull Request review system, specification framework, editor, or language server. It integrates with an existing Codex CLI and leaves code editing, diagnostics, testing, terminals, Git, and diffs in VS Code.
+Converge is not a general-purpose coding agent, Pull Request review system, specification framework, editor, or language server. It integrates with a selected local coding-agent provider and leaves code editing, diagnostics, testing, terminals, Git, and diffs in VS Code.
 
 ## Status
 
@@ -12,20 +12,20 @@ This repository contains the initial vertical slice. It is intentionally narrow:
 
 - one engineer in one trusted, local, single-folder Git workspace;
 - Manual mode;
-- a version-pinned-compatible Codex app-server adapter over stdio;
+- two production `AgentPort` adapters: Codex app-server and Claude Agent SDK;
 - repository-local session state;
 - a VS Code Reasoning Panel;
 - a deterministic revoked-session demonstration fixture;
 - no hosted service, team workflow, Marketplace publication, custom diff, or custom language server.
 
-Codex app-server is currently experimental. Converge validates the local CLI version and surfaces protocol failures rather than promising compatibility with every Codex release.
+Codex remains the default for existing installations. Codex app-server is experimental, so Converge validates the local CLI version. The Claude adapter pins one Agent SDK version and isolates its provider-specific protocol behind the same core port.
 
 ## Requirements
 
 - Node.js 22 or newer
 - npm
 - desktop VS Code 1.95 or newer
-- an installed and authenticated Codex CLI
+- either the supported Codex CLI, or Claude Code 2.1.228 plus provider-owned Claude API/cloud authentication supported by the Claude Agent SDK
 
 ## Develop
 
@@ -41,7 +41,7 @@ npm run package:vscode
 code --install-extension clients/vscode/converge-vscode-0.1.0.vsix
 ```
 
-In the target workspace, run **Converge: Start Pairing Session** from the Command Palette or open the Converge activity-bar view. Configure `converge.codexPath` if `codex` is not on VS Code's process path.
+In the target workspace, select `converge.provider` (`codex` by default), then run **Converge: Start Pairing Session** from the Command Palette or open the Converge activity-bar view. Configure `converge.codexPath` or `converge.claudePath` when the selected local CLI is not on VS Code's process path. Converge validates the supported executable version and provider-owned Claude API/cloud authentication before creating a session; it never asks for or stores provider credentials.
 
 ## Demonstration
 
@@ -49,7 +49,7 @@ The repository includes [`fixtures/revoked-session`](fixtures/revoked-session), 
 
 Follow the [complete walkthrough](docs/walkthrough.md) to exercise investigation, proposal, discussion or redirection, approval, implementation, native diff inspection, verification, and the final Understanding Check.
 
-The same red-to-green journey is executable without Codex or VS Code. It edits only a disposable fixture copy, runs the real fixture tests, confirms shared understanding, and removes the copy:
+The same red-to-green journey is executable without a live provider or VS Code. It runs unchanged through the real Codex and Claude adapters using deterministic offline transports, edits only a disposable fixture copy, runs the real fixture tests, confirms shared understanding, and removes the copy:
 
 ```bash
 npm run test:e2e
@@ -68,17 +68,17 @@ VS Code extension host
               ▼
 IDE-independent Converge core
               │ AgentPort
-              ▼
-Codex app-server adapter ── stdio JSON-RPC ── codex CLI
+              ├── Codex adapter ── stdio JSON-RPC ── codex CLI
+              └── Claude adapter ── Agent SDK ── bundled Claude Code runtime
 ```
 
-The core owns Pairing Sessions, Change Units, feedback, lifecycle rules, causal history, verification, and convergence. The VS Code client owns IDE capabilities. The Codex adapter translates provider events into the provider-independent core protocol. See [Architecture](docs/architecture.md).
+The core owns Pairing Sessions, Change Units, feedback, lifecycle rules, causal history, verification, and convergence. The VS Code client owns IDE capabilities and explicit provider selection. Each adapter translates provider events into the provider-independent core protocol. Persisted sessions record both the provider ID and that provider's conversation ID, preventing cross-provider resume. See [Architecture](docs/architecture.md).
 
 ## Security model
 
-Converge design approval means “I understand and accept this implementation direction.” It does **not** grant filesystem, shell, network, repository, or secret access. Codex execution approval requests remain separate and are labelled as such in the UI.
+Converge design approval means “I understand and accept this implementation direction.” It does **not** grant filesystem, shell, network, repository, or secret access. Provider execution approval requests remain separate and are labelled as such in the UI.
 
-The first client disables agent execution in untrusted workspaces, spawns the configured Codex executable directly rather than through a shell, and does not read or persist Codex credentials.
+The first client disables agent execution in untrusted workspaces and does not read or persist provider credentials. Codex is spawned directly rather than through a shell. Claude authentication remains owned by Anthropic's SDK environment or supported cloud-provider configuration; Converge does not broker Claude subscription login.
 
 ## Project direction
 
@@ -89,4 +89,4 @@ The first client disables agent execution in untrusted workspaces, spawns the co
 
 ## License
 
-[MIT](LICENSE)
+Converge's source code is [MIT](LICENSE). Optional provider runtimes retain their own licenses and terms. In particular, the Claude Agent SDK is governed by Anthropic's Commercial Terms and is not relicensed by Converge; see the [provider selection report](docs/research/second-provider-selection.md).
