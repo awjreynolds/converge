@@ -1,3 +1,4 @@
 {
+  "converge.provider": "claude",
   "converge.codexPath": "__converge_test_missing_codex_executable__"
 }

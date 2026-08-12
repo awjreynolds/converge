@@ -1,17 +1,22 @@
-import type { HumanFeedback, PairingSession } from "@converge/core";
+import { AgentRunCancelledError, type HumanFeedback, type PairingSession } from "@converge/core";
 
-import type { ExecutionApproval, PanelAction, PanelSnapshot } from "./panel.js";
+import type {
+  AgentProviderPresentation,
+  ExecutionApproval,
+  PanelAction,
+  PanelSnapshot,
+} from "./panel.js";
 
 export interface ExtensionHostCapabilities {
   isWorkspaceTrusted(): boolean;
-  readSession(): Promise<PairingSession | undefined>;
+  readSession(): Promise<unknown | undefined>;
   writeSession(session: PairingSession): Promise<void>;
   publishSnapshot(snapshot: PanelSnapshot): Promise<void>;
   openDiff(session: PairingSession, changeId: string, filePath: string | undefined): Promise<void>;
 }
 
 export interface SessionDriver {
-  loadSession?(): Promise<PairingSession | undefined>;
+  loadSession?(workspaceState?: unknown): Promise<PairingSession | undefined>;
   startSession(specification: string): Promise<PairingSession>;
   respondToChange(
     session: PairingSession,
@@ -22,6 +27,7 @@ export interface SessionDriver {
   answerUnderstanding(session: PairingSession, answer: string): Promise<PairingSession>;
   confirmConvergence(session: PairingSession): Promise<PairingSession>;
   respondToExecutionApproval(requestId: string, decision: "approved" | "denied"): Promise<void>;
+  cancelActiveRun(): Promise<void>;
   onExecutionApproval?(handler: (approval: ExecutionApproval) => void): void;
   dispose?(): Promise<void>;
 }
@@ -29,6 +35,7 @@ export interface SessionDriver {
 export interface ExtensionControllerDependencies {
   host: ExtensionHostCapabilities;
   driver: SessionDriver;
+  provider: AgentProviderPresentation;
 }
 
 export interface ExtensionController {
@@ -53,6 +60,7 @@ export function createExtensionController(
     session,
     workspaceTrusted: dependencies.host.isWorkspaceTrusted(),
     busy,
+    provider: dependencies.provider,
     pendingExecutionApproval,
     notice,
   });
@@ -75,16 +83,21 @@ export function createExtensionController(
   const perform = async (operation: () => Promise<PairingSession>): Promise<void> => {
     busy = true;
     notice = undefined;
-    await publish();
     try {
-      const next = await operation();
+      // Start the provider before yielding so Stop cannot fall into a startup gap.
+      const running = operation();
+      await publish();
+      const next = await running;
       session = next;
       await dependencies.host.writeSession(next);
     } catch (error) {
-      notice = {
-        tone: "error",
-        message: error instanceof Error ? error.message : "Converge could not complete the action.",
-      };
+      notice = error instanceof AgentRunCancelledError
+        ? { tone: "info", message: "Agent stopped. You can retry the action." }
+        : {
+            tone: "error",
+            message:
+              error instanceof Error ? error.message : "Converge could not complete the action.",
+          };
     } finally {
       busy = false;
       await publish();
@@ -93,10 +106,22 @@ export function createExtensionController(
 
   const controller: ExtensionController = {
     async initialize() {
-      session =
-        (await dependencies.driver.loadSession?.()) ??
-        (await dependencies.host.readSession());
-      if (session) await dependencies.host.writeSession(session);
+      try {
+        const workspaceState = await dependencies.host.readSession();
+        session = dependencies.driver.loadSession
+          ? await dependencies.driver.loadSession(workspaceState)
+          : (workspaceState as PairingSession | undefined);
+        if (session) await dependencies.host.writeSession(session);
+      } catch (error) {
+        session = undefined;
+        notice = {
+          tone: "error",
+          message:
+            error instanceof Error
+              ? error.message
+              : "The persisted Pairing Session could not be loaded.",
+        };
+      }
       await publish();
     },
     async publish() {
@@ -123,6 +148,21 @@ export function createExtensionController(
           await dependencies.host.openDiff(session, action.changeId, action.filePath);
         } catch (error) {
           reportError(error instanceof Error ? error.message : "The diff could not be opened.");
+        }
+        return;
+      }
+
+      if (action.type === "stop-agent") {
+        if (!busy) return;
+        pendingExecutionApproval = undefined;
+        try {
+          await dependencies.driver.cancelActiveRun();
+        } catch (error) {
+          notice = {
+            tone: "error",
+            message: error instanceof Error ? error.message : "The agent could not be stopped.",
+          };
+          await publish();
         }
         return;
       }

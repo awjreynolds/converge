@@ -1,5 +1,6 @@
 import {
   PairingSessionCoordinator,
+  normalizePairingSession,
   type AgentPort,
   type Clock,
   type HumanFeedback,
@@ -13,6 +14,8 @@ import type { SessionDriver } from "./controller.js";
 
 export interface ConvergeSessionDriverOptions {
   agent: AgentPort;
+  providerId: string;
+  legacyProviderId: string;
   store: PairingSessionStore;
   workspaceRoot: string;
   identities: IdentitySource;
@@ -24,6 +27,8 @@ export class ConvergeSessionDriver implements SessionDriver {
   readonly #agent: AgentPort;
   readonly #store: PairingSessionStore;
   readonly #workspaceRoot: string;
+  readonly #providerId: string;
+  readonly #legacyProviderId: string;
   readonly #executionDecisions = new Map<string, (decision: "approved" | "denied") => void>();
   #approvalHandler: ((approval: ExecutionApproval) => void) | undefined;
 
@@ -31,8 +36,11 @@ export class ConvergeSessionDriver implements SessionDriver {
     this.#agent = options.agent;
     this.#store = options.store;
     this.#workspaceRoot = options.workspaceRoot;
+    this.#providerId = options.providerId;
+    this.#legacyProviderId = options.legacyProviderId;
     this.#coordinator = new PairingSessionCoordinator({
       agent: options.agent,
+      agentProviderId: options.providerId,
       store: options.store,
       identities: options.identities,
       clock: options.clock,
@@ -48,9 +56,20 @@ export class ConvergeSessionDriver implements SessionDriver {
     this.#approvalHandler = handler;
   }
 
-  async loadSession(): Promise<PairingSession | undefined> {
+  async loadSession(workspaceState?: unknown): Promise<PairingSession | undefined> {
     const sessions = await this.#store.list();
-    return sessions.at(-1);
+    const persisted = sessions.at(-1) ?? workspaceState;
+    if (persisted === undefined) return undefined;
+    const session = normalizePairingSession(persisted, {
+      legacyProviderId: this.#legacyProviderId,
+    });
+    if (session.agent.providerId !== this.#providerId) {
+      throw new Error(
+        `Pairing Session ${session.id} belongs to provider ${session.agent.providerId}, ` +
+          `not configured provider ${this.#providerId}. Select ${session.agent.providerId} to resume it.`,
+      );
+    }
+    return session;
   }
 
   async startSession(specification: string): Promise<PairingSession> {
@@ -142,9 +161,15 @@ export class ConvergeSessionDriver implements SessionDriver {
     resolve(decision);
   }
 
+  async cancelActiveRun(): Promise<void> {
+    for (const resolve of this.#executionDecisions.values()) resolve("denied");
+    this.#executionDecisions.clear();
+    await this.#agent.cancel();
+  }
+
   async dispose(): Promise<void> {
     for (const resolve of this.#executionDecisions.values()) resolve("denied");
     this.#executionDecisions.clear();
-    await this.#agent.dispose?.();
+    await this.#agent.dispose();
   }
 }

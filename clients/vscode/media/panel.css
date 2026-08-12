@@ -214,12 +214,19 @@ textarea:focus { border-color: var(--vscode-focusBorder); }
 .button.danger { color: var(--vscode-errorForeground); }
 .button:disabled { cursor: not-allowed; opacity: .45; }
 
-.trust-banner, .notice, .execution-approval, .understanding {
+.trust-banner, .notice, .execution-approval, .understanding, .provider-status {
   margin: 12px;
   padding: 12px;
   border: 1px solid var(--vscode-widget-border);
   border-radius: 6px;
 }
+.provider-status {
+  color: var(--vscode-descriptionForeground);
+  background: var(--vscode-editorWidget-background);
+}
+.provider-status > strong { display: block; color: var(--vscode-foreground); }
+.provider-status ul { margin: 7px 0; padding-left: 18px; font-size: .8rem; }
+.provider-limitations summary { cursor: pointer; }
 .trust-banner, .notice.error {
   border-color: var(--vscode-inputValidation-warningBorder);
   background: var(--vscode-inputValidation-warningBackground);

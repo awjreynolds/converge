@@ -128,6 +128,9 @@ root?.addEventListener("click", (event) => {
     case "confirm-convergence":
       vscode.postMessage({ type: "confirm-convergence" });
       return;
+    case "stop-agent":
+      vscode.postMessage({ type: "stop-agent" });
+      return;
     case "allow-execution":
     case "deny-execution": {
       const requestId = root.querySelector<HTMLInputElement>("[data-execution-request-id]")?.value;

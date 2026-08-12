@@ -15,8 +15,21 @@ export interface PanelSnapshot {
   session: PairingSession | undefined;
   workspaceTrusted: boolean;
   busy: boolean;
+  provider: AgentProviderPresentation;
   pendingExecutionApproval: ExecutionApproval | undefined;
   notice: { tone: "info" | "error"; message: string } | undefined;
+}
+
+export interface AgentProviderPresentation {
+  id: string;
+  label: string;
+  capabilities: readonly {
+    label: string;
+    available: boolean;
+    detail?: string;
+  }[];
+  limitations: readonly string[];
+  setupGuidance: string;
 }
 
 export type PanelAction =
@@ -31,6 +44,7 @@ export type PanelAction =
   | { type: "open-diff"; changeId: string; filePath?: string }
   | { type: "answer-understanding"; answer: string }
   | { type: "confirm-convergence" }
+  | { type: "stop-agent" }
   | {
       type: "execution-decision";
       requestId: string;
@@ -107,6 +121,8 @@ export function decodePanelAction(value: unknown): PanelAction | undefined {
         : undefined;
     case "confirm-convergence":
       return { type: "confirm-convergence" };
+    case "stop-agent":
+      return { type: "stop-agent" };
     case "execution-decision":
       return isString(value.requestId) &&
         (value.decision === "approved" || value.decision === "denied")
@@ -240,9 +256,19 @@ export function renderReasoningPanel(snapshot: PanelSnapshot): string {
   const approval = snapshot.pendingExecutionApproval
     ? `<aside class="execution-approval"><span class="eyebrow">Separate host permission</span><h2>Execution permission</h2><code>${escapeText(snapshot.pendingExecutionApproval.operation)}</code>${snapshot.pendingExecutionApproval.reason ? `<p>${escapeText(snapshot.pendingExecutionApproval.reason)}</p>` : ""}<div class="actions">${button("Deny", "deny-execution", !snapshot.workspaceTrusted, "danger")}${button("Allow once", "allow-execution", !snapshot.workspaceTrusted, "primary")}</div><input type="hidden" data-execution-request-id value="${escapeAttribute(snapshot.pendingExecutionApproval.requestId)}"></aside>`
     : "";
+  const capabilityItems = snapshot.provider.capabilities
+    .map(
+      (capability) =>
+        `<li><strong>${escapeText(capability.label)}</strong> — ${capability.available ? "available" : "not available"}${capability.detail ? `: ${escapeText(capability.detail)}` : ""}</li>`,
+    )
+    .join("");
+  const limitations = snapshot.provider.limitations.length
+    ? `<details class="provider-limitations"><summary>Provider limitations</summary><ul>${snapshot.provider.limitations.map((limitation) => `<li>${escapeText(limitation)}</li>`).join("")}</ul><p>${escapeText(snapshot.provider.setupGuidance)}</p></details>`
+    : "";
+  const provider = `<aside class="provider-status"><span class="eyebrow">Agent provider</span><strong>${escapeText(snapshot.provider.label)}</strong><ul>${capabilityItems}</ul>${limitations}${snapshot.busy ? button("Stop agent", "stop-agent", false, "danger") : ""}</aside>`;
 
   if (!snapshot.session) {
-    return `${trustBanner}${notice}<main class="empty"><span class="brand-mark">&gt;&lt;</span><h1>Converge</h1><p>Keep your mental model aligned while an agent implements.</p><label for="specification">Task or specification</label><textarea id="specification" rows="8" placeholder="Describe the change to build"></textarea>${button("Start Pairing Session", "start-session", snapshot.busy || !snapshot.workspaceTrusted, "primary")}</main>`;
+    return `${trustBanner}${notice}${provider}<main class="empty"><span class="brand-mark">&gt;&lt;</span><h1>Converge</h1><p>Keep your mental model aligned while an agent implements.</p><label for="specification">Task or specification</label><textarea id="specification" rows="8" placeholder="Describe the change to build"></textarea>${button("Start Pairing Session", "start-session", snapshot.busy || !snapshot.workspaceTrusted, "primary")}</main>`;
   }
 
   const session = snapshot.session;
@@ -251,7 +277,7 @@ export function renderReasoningPanel(snapshot: PanelSnapshot): string {
     ? `<ol class="progress-list">${session.progress.map((item) => `<li>${escapeText(item)}</li>`).join("")}</ol>`
     : `<p class="muted">Investigation progress will appear here.</p>`;
 
-  return `${trustBanner}${notice}<main>
+  return `${trustBanner}${notice}${provider}<main>
     <header class="session-header"><div><span class="eyebrow">Pairing Session</span><h1>${escapeText(session.specification)}</h1></div><span class="session-status">${escapeText(renderStatus(session.status))}</span></header>
     <section class="session-progress"><div class="progress-summary"><strong>${verified} of ${session.changes.length} verified</strong><span>${escapeText(session.status)}</span></div><progress value="${verified}" max="${Math.max(session.changes.length, 1)}"></progress>${progress}</section>
     ${approval}

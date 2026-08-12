@@ -1,4 +1,4 @@
-import type { PairingSession } from "@converge/core";
+import { AgentRunCancelledError, type PairingSession } from "@converge/core";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -15,6 +15,7 @@ const session: PairingSession = {
   status: "awaiting-human",
   createdAt: "2026-08-12T09:00:00.000Z",
   updatedAt: "2026-08-12T09:00:00.000Z",
+  agent: { providerId: "codex" },
   activeChangeId: "change-1",
   progress: [],
   changes: [],
@@ -40,8 +41,24 @@ function harness(trusted = true) {
     answerUnderstanding: vi.fn(async (current) => ({ ...current, status: "understanding" })),
     confirmConvergence: vi.fn(async (current) => ({ ...current, status: "converged" })),
     respondToExecutionApproval: vi.fn(async () => undefined),
+    cancelActiveRun: vi.fn(async () => undefined),
   };
-  return { controller: createExtensionController({ host, driver }), driver, host, snapshots };
+  return {
+    controller: createExtensionController({
+      host,
+      driver,
+      provider: {
+        id: "codex",
+        label: "OpenAI Codex",
+        capabilities: [],
+        limitations: [],
+        setupGuidance: "Authenticate with the provider.",
+      },
+    }),
+    driver,
+    host,
+    snapshots,
+  };
 }
 
 describe("createExtensionController", () => {
@@ -52,6 +69,26 @@ describe("createExtensionController", () => {
     await controller.initialize();
 
     expect(snapshots.at(-1)).toMatchObject({ session, workspaceTrusted: true, busy: false });
+  });
+
+  it("publishes a provider mismatch diagnostic without failing extension initialization", async () => {
+    const { controller, driver, snapshots } = harness();
+    driver.loadSession = vi.fn(async () => {
+      throw new Error(
+        "Pairing Session session-1 belongs to provider codex, not configured provider claude.",
+      );
+    });
+
+    await expect(controller.initialize()).resolves.toBeUndefined();
+
+    expect(snapshots.at(-1)).toMatchObject({
+      session: undefined,
+      notice: {
+        tone: "error",
+        message:
+          "Pairing Session session-1 belongs to provider codex, not configured provider claude.",
+      },
+    });
   });
 
   it("persists and publishes the result of a human response", async () => {
@@ -128,5 +165,34 @@ describe("createExtensionController", () => {
     });
     expect(driver.respondToExecutionApproval).toHaveBeenCalledWith("approval-1", "approved");
     expect(snapshots.at(-1)?.pendingExecutionApproval).toBeUndefined();
+  });
+
+  it("stops a busy provider run without treating cancellation as a session failure", async () => {
+    const { controller, driver, snapshots } = harness();
+    let rejectRun: ((error: Error) => void) | undefined;
+    vi.mocked(driver.startSession).mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectRun = reject;
+        }),
+    );
+    vi.mocked(driver.cancelActiveRun).mockImplementation(async () => {
+      rejectRun?.(new AgentRunCancelledError());
+    });
+    await controller.initialize();
+
+    const running = controller.handlePanelAction({
+      type: "start-session",
+      specification: "Long operation",
+    });
+    await vi.waitFor(() => expect(snapshots.at(-1)?.busy).toBe(true));
+    await controller.handlePanelAction({ type: "stop-agent" });
+    await running;
+
+    expect(driver.cancelActiveRun).toHaveBeenCalledOnce();
+    expect(snapshots.at(-1)).toMatchObject({
+      busy: false,
+      notice: { tone: "info", message: "Agent stopped. You can retry the action." },
+    });
   });
 });

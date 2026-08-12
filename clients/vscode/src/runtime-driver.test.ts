@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type {
   AgentEvent,
@@ -29,6 +29,12 @@ class MemoryStore implements PairingSessionStore {
 class ScriptedAgent implements AgentPort {
   phases: string[] = [];
   investigationCount = 0;
+
+  async cancel(): Promise<void> {}
+
+  async respondToExecutionApproval(): Promise<void> {}
+
+  async dispose(): Promise<void> {}
 
   async *run(request: AgentRunRequest): AsyncIterable<AgentEvent> {
     this.phases.push(request.phase);
@@ -116,6 +122,8 @@ describe("ConvergeSessionDriver", () => {
     let nextChange = 0;
     const driver = new ConvergeSessionDriver({
       agent,
+      providerId: "codex",
+      legacyProviderId: "codex",
       store,
       workspaceRoot: "/fixture",
       identities: {
@@ -179,6 +187,8 @@ describe("ConvergeSessionDriver", () => {
     const agent = new ScriptedAgent();
     const driver = new ConvergeSessionDriver({
       agent,
+      providerId: "codex",
+      legacyProviderId: "codex",
       store: new MemoryStore(),
       workspaceRoot: "/fixture",
       identities: {
@@ -213,6 +223,8 @@ describe("ConvergeSessionDriver", () => {
     let nextChange = 0;
     const driver = new ConvergeSessionDriver({
       agent,
+      providerId: "codex",
+      legacyProviderId: "codex",
       store: new MemoryStore(),
       workspaceRoot: "/fixture",
       identities: {
@@ -239,5 +251,112 @@ describe("ConvergeSessionDriver", () => {
     );
     expect(session.activeChangeId).toBe("change-2");
     expect(session.changes).toHaveLength(2);
+  });
+
+  it("migrates legacy workspace state to the default Codex identity", async () => {
+    const driver = new ConvergeSessionDriver({
+      agent: new ScriptedAgent(),
+      providerId: "codex",
+      legacyProviderId: "codex",
+      store: new MemoryStore(),
+      workspaceRoot: "/fixture",
+      identities: {
+        nextSessionId: () => "unused",
+        nextChangeUnitId: () => "unused",
+      },
+      clock: { now: () => "2026-08-12T00:00:00.000Z" },
+    });
+    const { agent: _agent, ...legacy } = {
+      id: "legacy-session",
+      specification: "Resume this",
+      workspaceRoot: "/fixture",
+      status: "awaiting-human" as const,
+      createdAt: "2026-08-12T00:00:00.000Z",
+      updatedAt: "2026-08-12T00:00:00.000Z",
+      agent: { providerId: "codex" },
+      agentThreadId: "legacy-thread",
+      progress: [],
+      changes: [],
+    };
+
+    const loaded = await driver.loadSession(legacy);
+
+    expect(loaded?.agent).toEqual({
+      providerId: "codex",
+      conversationId: "legacy-thread",
+    });
+    expect(loaded).not.toHaveProperty("agentThreadId");
+  });
+
+  it("rejects a persisted provider mismatch before an agent can run", async () => {
+    const agent = new ScriptedAgent();
+    const driver = new ConvergeSessionDriver({
+      agent,
+      providerId: "claude",
+      legacyProviderId: "codex",
+      store: new MemoryStore(),
+      workspaceRoot: "/fixture",
+      identities: {
+        nextSessionId: () => "unused",
+        nextChangeUnitId: () => "unused",
+      },
+      clock: { now: () => "2026-08-12T00:00:00.000Z" },
+    });
+
+    await expect(
+      driver.loadSession({
+        id: "session-1",
+        specification: "Resume this",
+        workspaceRoot: "/fixture",
+        status: "awaiting-human",
+        createdAt: "2026-08-12T00:00:00.000Z",
+        updatedAt: "2026-08-12T00:00:00.000Z",
+        agent: { providerId: "codex" },
+        progress: [],
+        changes: [],
+      }),
+    ).rejects.toThrow("belongs to provider codex, not configured provider claude");
+    expect(agent.phases).toEqual([]);
+  });
+
+  it("cancels the provider and denies pending execution approvals", async () => {
+    let approvalDecision: "approved" | "denied" | undefined;
+    const agent: AgentPort = {
+      async *run() {
+        yield {
+          type: "execution-approval-requested",
+          requestId: "approval-1",
+          operation: "npm test",
+        };
+      },
+      cancel: vi.fn(async () => undefined),
+      respondToExecutionApproval: vi.fn(async (_requestId, decision) => {
+        approvalDecision = decision;
+      }),
+      dispose: vi.fn(async () => undefined),
+    };
+    const driver = new ConvergeSessionDriver({
+      agent,
+      providerId: "codex",
+      legacyProviderId: "codex",
+      store: new MemoryStore(),
+      workspaceRoot: "/fixture",
+      identities: {
+        nextSessionId: () => "session-1",
+        nextChangeUnitId: () => "unused",
+      },
+      clock: { now: () => "2026-08-12T00:00:00.000Z" },
+    });
+
+    const approvalPresented = new Promise<void>((resolve) => {
+      driver.onExecutionApproval(() => resolve());
+    });
+    const run = driver.startSession("Exercise cancellation");
+    await approvalPresented;
+    await driver.cancelActiveRun();
+    await run;
+
+    expect(agent.cancel).toHaveBeenCalledOnce();
+    expect(approvalDecision).toBe("denied");
   });
 });

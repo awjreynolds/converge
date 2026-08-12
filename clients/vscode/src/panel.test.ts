@@ -15,6 +15,7 @@ const session: PairingSession = {
   status: "awaiting-human",
   createdAt: "2026-08-12T09:00:00.000Z",
   updatedAt: "2026-08-12T09:01:00.000Z",
+  agent: { providerId: "codex" },
   activeChangeId: "change-1",
   progress: ["Located refresh token validation"],
   changes: [
@@ -104,6 +105,16 @@ function snapshot(overrides: Partial<PanelSnapshot> = {}): PanelSnapshot {
     session,
     workspaceTrusted: true,
     busy: false,
+    provider: {
+      id: "codex",
+      label: "OpenAI Codex",
+      capabilities: [
+        { label: "Structured output", available: true },
+        { label: "Network isolation", available: false },
+      ],
+      limitations: ["Network isolation requires an external sandbox."],
+      setupGuidance: "Authenticate with the provider.",
+    },
     pendingExecutionApproval: undefined,
     notice: undefined,
     ...overrides,
@@ -132,6 +143,10 @@ describe("decodePanelAction", () => {
     expect(decodePanelAction({ type: "run-shell", command: "rm -rf ." })).toBeUndefined();
     expect(decodePanelAction(null)).toBeUndefined();
   });
+
+  it("accepts the provider-neutral stop action", () => {
+    expect(decodePanelAction({ type: "stop-agent" })).toEqual({ type: "stop-agent" });
+  });
 });
 
 describe("reducePanelUiState", () => {
@@ -148,6 +163,16 @@ describe("reducePanelUiState", () => {
 });
 
 describe("renderReasoningPanel", () => {
+  it("shows the selected provider, capability gaps, and a stop action while busy", () => {
+    const html = renderReasoningPanel(snapshot({ busy: true }));
+
+    expect(html).toContain("OpenAI Codex");
+    expect(html).toContain("Network isolation");
+    expect(html).toContain("not available");
+    expect(html).toContain("Network isolation requires an external sandbox.");
+    expect(html).toContain('data-action="stop-agent"');
+  });
+
   it("renders a compact current Change Unit with progress, evidence, actions and revision history", () => {
     const html = renderReasoningPanel(snapshot());
 

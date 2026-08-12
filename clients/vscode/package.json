@@ -31,6 +31,7 @@
       "supported": "limited",
       "description": "Pairing Sessions and diffs remain readable. Agent execution, workspace edits, tasks, and terminals are disabled.",
       "restrictedConfigurations": [
+        "converge.provider",
         "converge.codexPath"
       ]
     },
@@ -50,6 +51,19 @@
     "configuration": {
       "title": "Converge",
       "properties": {
+        "converge.provider": {
+          "type": "string",
+          "enum": [
+            "codex",
+            "claude"
+          ],
+          "enumDescriptions": [
+            "OpenAI Codex via its local app-server protocol.",
+            "Anthropic Claude via the Claude Agent SDK. Authentication remains provider-owned."
+          ],
+          "default": "codex",
+          "description": "Agent provider for new and resumed Pairing Sessions. Existing sessions must be resumed with their original provider."
+        },
         "converge.codexPath": {
           "type": "string",
           "default": "codex",
@@ -84,6 +98,7 @@
     "vscode:prepublish": "npm run build"
   },
   "dependencies": {
+    "@converge/claude": "*",
     "@converge/codex": "*",
     "@converge/core": "*",
     "mermaid": "^11.16.1"
