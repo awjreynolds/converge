@@ -10,7 +10,7 @@ The core never imports `vscode`, starts processes, reads provider credentials, o
 
 ## Agent adapter
 
-The core's `AgentPort` accepts bounded phase requests and emits structured events. `@converge/codex` implements that interface with `codex app-server` over stdio JSON-RPC; `@converge/claude` implements the same interface over the Claude Agent SDK. Provider protocol types remain inside their adapter packages.
+The core's `AgentPort` accepts bounded phase requests and emits structured events. `@converge/codex` implements that interface with `codex app-server` over stdio JSON-RPC; `@converge/claude` implements it over the Claude Agent SDK; and `@converge/pi` implements it with Pi's JSONL RPC protocol. Provider protocol types remain inside their adapter packages.
 
 Each investigation, discussion, revision, implementation, verification, summary, or understanding-assessment checkpoint is a bounded provider turn. The active adapter validates the completed structured output before it becomes Converge state. Experimental dynamic tools and cross-process live attachment are not part of this slice.
 
@@ -33,9 +33,15 @@ The desktop extension host is a thin adapter around the core:
 The webview can be discarded and rehydrated. Durable Pairing Session state lives outside the iframe.
 
 The extension registry validates the selected provider before a new session is persisted. Codex
-checks its configured executable and app-server version. Claude checks provider-owned API/cloud
-configuration and the exact configured local Claude Code version; neither check sends workspace
-content to a provider.
+checks its configured executable, app-server version, and account. Claude checks provider-owned
+API/cloud configuration and the exact configured local Claude Code version. Pi checks its exact CLI
+version and selected authenticated model using a restricted ephemeral RPC process. None of these
+checks sends workspace content to a provider.
+
+Pi runs out of process because its current SDK requires a newer Node.js runtime than the minimum
+supported VS Code extension host. Its adapter disables discovered Pi resources and project trust,
+loads only Converge's packaged approval gate, and allows only an explicit tool set. See the
+[Pi integration decision](research/pi-provider-integration.md).
 
 ## Approval boundaries
 

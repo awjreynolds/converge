@@ -10,12 +10,19 @@ npm run verify
 ```
 
 Use Node.js 22 or newer. Keep the core independent of VS Code and Codex-specific chat formats.
+Provider-specific protocol and credential types belong inside their adapter packages; the core
+accepts only the normalized `AgentPort` contract.
 
 `npm run verify` includes the approved dependency-license policy. Run `npm run audit` before changing dependencies; CI rejects moderate-or-higher advisories.
 
 The policy distinguishes distributable open-source dependencies from reviewed build-only tools. The official VSIX packager's platform signer binaries have a restrictive Microsoft tool license, are pinned explicitly, and must never be bundled into Converge runtime artifacts.
 
 An opt-in provider adapter may depend on an exact-pinned runtime under separate terms only when the provider cannot satisfy the approved safety contract through an open-source SDK. Such an exception requires a documented selection decision, an exact package-and-version license check, a third-party notice in distributed artifacts, provider-owned credentials, and a clear UI limitation. It does not change the MIT license on Converge's own source.
+
+An external provider executable remains outside the distributed dependency graph. Pin and validate
+its supported version, document its license and installation, spawn it without a shell, disable
+ambient plugin or project-resource discovery where the provider supports that, and keep credentials
+owned by the provider.
 
 ## Tests
 

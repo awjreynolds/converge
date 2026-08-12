@@ -18,14 +18,16 @@ The happy-path test must pass. There is deliberately no revoked-session test yet
 
 1. Launch Converge in an Extension Development Host or install the generated VSIX.
 2. Open the copied fixture as a trusted, single-folder workspace.
-3. Run **Converge: Start Pairing Session** and provide `task.md` as the specification.
-4. Inspect the agent's investigation progress and first proposed Change Unit.
-5. Discuss the proposed behaviour if its rationale is unclear.
-6. Redirect any proposal that bypasses `SessionLookup`; require the existing persistence seam to remain intact.
-7. Approve the revised Change Unit, then choose **Apply approved change**. Treat any provider command or file approval as a separate execution decision.
-8. Inspect the resulting files with **View Diff** in VS Code.
-9. Choose **Run verification**. A test-only Change Unit may report **expected failure**; the implementation Change Unit must pass.
-10. Choose **Next Change Unit** after each verified or rejected unit. The selected provider either proposes the next meaningful decision or, once every requirement is verified, presents the final system model and Understanding Check.
+3. Select Codex, Claude, or Pi as the provider. When using Pi, install the supported Pi CLI,
+   authenticate and select a model in Pi, and let Converge load only its packaged approval gate.
+4. Run **Converge: Start Pairing Session** and provide `task.md` as the specification.
+5. Inspect the agent's investigation progress and first proposed Change Unit.
+6. Discuss the proposed behaviour if its rationale is unclear.
+7. Redirect any proposal that bypasses `SessionLookup`; require the existing persistence seam to remain intact.
+8. Approve the revised Change Unit, then choose **Apply approved change**. Treat any provider command or file approval as a separate execution decision.
+9. Inspect the resulting files with **View Diff** in VS Code.
+10. Choose **Run verification**. A test-only Change Unit may report **expected failure**; the implementation Change Unit must pass.
+11. Choose **Next Change Unit** after each verified or rejected unit. The selected provider either proposes the next meaningful decision or, once every requirement is verified, presents the final system model and Understanding Check.
 
 ## Expected result
 
