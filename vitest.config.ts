@@ -9,5 +9,6 @@ export default defineConfig({
       "packages/**/*.test.ts",
       "clients/**/*.test.ts",
     ],
+    exclude: ["clients/vscode/src/test/**"],
   },
 });
