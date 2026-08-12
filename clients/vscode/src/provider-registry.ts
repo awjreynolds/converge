@@ -2,7 +2,7 @@ import type { AgentPort } from "@converge/core";
 
 import type { AgentProviderPresentation } from "./panel.js";
 
-export const AGENT_PROVIDER_IDS = ["codex", "claude"] as const;
+export const AGENT_PROVIDER_IDS = ["codex", "claude", "pi"] as const;
 export type AgentProviderId = (typeof AGENT_PROVIDER_IDS)[number];
 
 export interface AgentProviderCapabilities {
@@ -25,6 +25,7 @@ export interface AgentProviderFactoryInput {
   workspaceRoot: string;
   codexPath: string;
   claudePath: string;
+  piPath: string;
 }
 
 export type AgentProviderFactory = (
@@ -70,6 +71,23 @@ const descriptors: Record<AgentProviderId, AgentProviderDescriptor> = {
     setupGuidance:
       "Install the supported Claude Code CLI, configure converge.claudePath, and use provider-owned API-key or supported cloud authentication. Converge never collects or stores Claude credentials.",
   },
+  pi: {
+    id: "pi",
+    label: "Pi",
+    capabilities: {
+      structuredOutput: true,
+      sessionResume: true,
+      cancellation: true,
+      executionApproval: true,
+      networkIsolation: false,
+    },
+    limitations: [
+      "Converge must load its packaged Pi gate extension; unreviewed project extensions are not loaded.",
+      "Shell commands can perform network activity unless the workspace is externally sandboxed.",
+    ],
+    setupGuidance:
+      "Install and authenticate the supported Pi CLI, then configure converge.piPath if it is not available as pi. Pi owns model selection and credentials; Converge never collects or stores them.",
+  },
 };
 
 export function providerDescriptor(id: AgentProviderId): AgentProviderDescriptor {
@@ -103,6 +121,7 @@ export function presentProvider(
 export function createProviderRegistry(factories: {
   codex: AgentProviderFactory;
   claude?: AgentProviderFactory;
+  pi?: AgentProviderFactory;
 }) {
   return {
     select(configuredId: string | undefined): SelectedAgentProvider {

@@ -1,4 +1,5 @@
 import { build } from "esbuild";
+import { copyFile, mkdir } from "node:fs/promises";
 
 await Promise.all([
   build({
@@ -22,4 +23,10 @@ await Promise.all([
     sourcemap: false,
     target: "es2022",
   }),
+  mkdir("dist", { recursive: true }).then(() =>
+    copyFile(
+      "../../packages/pi/assets/converge-extension.js",
+      "dist/pi-converge-extension.js",
+    ),
+  ),
 ]);

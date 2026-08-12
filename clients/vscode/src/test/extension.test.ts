@@ -16,6 +16,12 @@ export async function run(): Promise<void> {
       await selectsConfiguredProviderThroughActivatedExtension();
       await injectedTrustCapabilityGatesProviderExecution();
       return;
+    case "missing-pi":
+      await reportsMissingPiThroughPublicCommand();
+      return;
+    case "unsupported-pi":
+      await reportsUnsupportedPiThroughPublicCommand();
+      return;
     case "missing-authentication":
       await reportsMissingAuthenticationThroughPublicCommand();
       return;
@@ -35,14 +41,44 @@ export async function run(): Promise<void> {
 
 async function selectsConfiguredProviderThroughActivatedExtension(): Promise<void> {
   const active = await activateExtension();
-  assert.equal(vscode.workspace.getConfiguration("converge").get("provider"), "claude");
-  assert.equal(active.currentSnapshot()?.provider.id, "claude");
+  assert.equal(vscode.workspace.getConfiguration("converge").get("provider"), "pi");
+  assert.equal(active.currentSnapshot()?.provider.id, "pi");
   assert.equal(active.currentSnapshot()?.workspaceTrusted, vscode.workspace.isTrusted);
 
   const commands = await vscode.commands.getCommands(true);
   assert.ok(commands.includes("converge.openPanel"));
   assert.ok(commands.includes("converge.startSession"));
   console.log("PASS activated production composition selects the configured provider");
+}
+
+async function reportsMissingPiThroughPublicCommand(): Promise<void> {
+  const active = await activateExtension();
+  const before = await sessionFiles();
+
+  await vscode.commands.executeCommand(
+    "converge.startSession",
+    "Validate Pi installation without sending workspace content",
+  );
+
+  assert.match(active.currentSnapshot()?.notice?.message ?? "", /Pi.*(executable|install|ENOENT)/i);
+  assert.equal(active.currentSnapshot()?.busy, false);
+  assert.deepEqual(await sessionFiles(), before);
+  console.log("PASS public command publishes missing-Pi failure before persistence");
+}
+
+async function reportsUnsupportedPiThroughPublicCommand(): Promise<void> {
+  const active = await activateExtension();
+  const before = await sessionFiles();
+
+  await vscode.commands.executeCommand(
+    "converge.startSession",
+    "Validate Pi compatibility without sending workspace content",
+  );
+
+  assert.match(active.currentSnapshot()?.notice?.message ?? "", /Unsupported Pi CLI version/i);
+  assert.equal(active.currentSnapshot()?.busy, false);
+  assert.deepEqual(await sessionFiles(), before);
+  console.log("PASS public command publishes unsupported-Pi failure before persistence");
 }
 
 async function reportsMissingAuthenticationThroughPublicCommand(): Promise<void> {

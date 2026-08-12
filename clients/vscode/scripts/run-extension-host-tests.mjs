@@ -8,7 +8,9 @@ import { runTests } from "@vscode/test-electron";
 const extensionRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const cachePath = process.env.VSCODE_TEST_CACHE_PATH ?? join(extensionRoot, ".vscode-test");
 const scenarios = [
-  { name: "provider-selection", provider: "claude" },
+  { name: "provider-selection", provider: "pi" },
+  { name: "missing-pi", provider: "pi" },
+  { name: "unsupported-pi", provider: "pi" },
   { name: "missing-authentication", provider: "claude", authentication: "missing" },
   { name: "unsupported-version", provider: "claude", authentication: "configured" },
   { name: "provider-mismatch", provider: "claude" },
@@ -26,6 +28,10 @@ for (const scenario of scenarios) {
         "converge.provider": scenario.provider,
         "converge.codexPath": "__converge_test_missing_codex_executable__",
         "converge.claudePath": process.execPath,
+        "converge.piPath":
+          scenario.name === "missing-pi"
+            ? "__converge_test_missing_pi_executable__"
+            : process.execPath,
       }, null, 2)}\n`,
       "utf8",
     );

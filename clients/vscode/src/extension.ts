@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { JsonFilePairingSessionStore, type PairingSession } from "@converge/core";
 import { CodexAppServerAdapter } from "@converge/codex";
 import { ClaudeAgentAdapter } from "@converge/claude";
+import { PiAgentAdapter } from "@converge/pi";
 
 import {
   createExtensionController,
@@ -113,7 +114,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<Active
   const configuration = vscode.workspace.getConfiguration("converge");
   let selected: SelectedAgentProvider;
   try {
-    selected = selectConfiguredProvider(configuration, productionProviderFactories());
+    selected = selectConfiguredProvider(
+      configuration,
+      productionProviderFactories(context.asAbsolutePath("dist/pi-converge-extension.js")),
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : "The configured provider is unavailable.";
     return activateWithDependencies(
@@ -124,10 +128,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<Active
   }
   const executablePath = configuration.get<string>("codexPath", "codex");
   const claudePath = configuration.get<string>("claudePath", "claude");
+  const piPath = configuration.get<string>("piPath", "pi");
   const agent = await selected.create({
     workspaceRoot,
     codexPath: executablePath,
     claudePath,
+    piPath,
   });
   const driver = new ConvergeSessionDriver({
     agent,
@@ -153,17 +159,27 @@ export interface ProviderConfiguration {
 
 export function selectConfiguredProvider(
   configuration: ProviderConfiguration,
-  factories: { codex: AgentProviderFactory; claude?: AgentProviderFactory },
+  factories: {
+    codex: AgentProviderFactory;
+    claude?: AgentProviderFactory;
+    pi?: AgentProviderFactory;
+  },
 ): SelectedAgentProvider {
   return createProviderRegistry(factories).select(
     configuration.get<string>("provider", "codex"),
   );
 }
 
-function productionProviderFactories(): { codex: AgentProviderFactory; claude?: AgentProviderFactory } {
+function productionProviderFactories(gateExtensionPath: string): {
+  codex: AgentProviderFactory;
+  claude?: AgentProviderFactory;
+  pi?: AgentProviderFactory;
+} {
   return {
     codex: ({ codexPath }) => new CodexAppServerAdapter({ executablePath: codexPath }),
     claude: ({ claudePath }) => new ClaudeAgentAdapter({ executablePath: claudePath }),
+    pi: ({ piPath, workspaceRoot }) =>
+      new PiAgentAdapter({ executablePath: piPath, gateExtensionPath, workspaceRoot }),
   };
 }
 

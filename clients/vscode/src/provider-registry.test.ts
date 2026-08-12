@@ -28,6 +28,7 @@ describe("AgentProviderRegistry", () => {
       workspaceRoot: "/workspace",
       codexPath: "/opt/codex",
       claudePath: "claude",
+      piPath: "pi",
     });
 
     expect(selected.descriptor.id).toBe("codex");
@@ -37,6 +38,7 @@ describe("AgentProviderRegistry", () => {
       workspaceRoot: "/workspace",
       codexPath: "/opt/codex",
       claudePath: "claude",
+      piPath: "pi",
     });
   });
 
@@ -49,6 +51,7 @@ describe("AgentProviderRegistry", () => {
       workspaceRoot: "/workspace",
       codexPath: "ignored",
       claudePath: "/opt/claude",
+      piPath: "pi",
     });
 
     expect(selected.descriptor).toMatchObject({
@@ -66,6 +69,45 @@ describe("AgentProviderRegistry", () => {
       workspaceRoot: "/workspace",
       codexPath: "ignored",
       claudePath: "/opt/claude",
+      piPath: "pi",
+    });
+  });
+
+  it("selects Pi by stable provider ID with an explicit approval gate", async () => {
+    const pi = factory();
+    const registry = createProviderRegistry({ codex: factory(), pi });
+
+    const selected = registry.select("pi");
+    await selected.create({
+      workspaceRoot: "/workspace",
+      codexPath: "ignored",
+      claudePath: "ignored",
+      piPath: "/opt/pi",
+    });
+
+    expect(selected.descriptor).toMatchObject({
+      id: "pi",
+      label: "Pi",
+      capabilities: {
+        structuredOutput: true,
+        sessionResume: true,
+        cancellation: true,
+        executionApproval: true,
+        networkIsolation: false,
+      },
+    });
+    expect(selected.descriptor.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/network activity/i),
+        expect.stringMatching(/gate/i),
+      ]),
+    );
+    expect(selected.descriptor.setupGuidance).toContain("converge.piPath");
+    expect(pi).toHaveBeenCalledWith({
+      workspaceRoot: "/workspace",
+      codexPath: "ignored",
+      claudePath: "ignored",
+      piPath: "/opt/pi",
     });
   });
 
@@ -73,10 +115,13 @@ describe("AgentProviderRegistry", () => {
     const registry = createProviderRegistry({ codex: factory() });
 
     expect(() => registry.select("other")).toThrow(
-      'Unknown Converge agent provider "other". Choose one of: codex, claude.',
+      'Unknown Converge agent provider "other". Choose one of: codex, claude, pi.',
     );
     expect(() => registry.select("claude")).toThrow(
       "Anthropic Claude support is not available in this Converge build.",
+    );
+    expect(() => registry.select("pi")).toThrow(
+      "Pi support is not available in this Converge build.",
     );
   });
 });

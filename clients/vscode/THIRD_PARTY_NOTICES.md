@@ -7,3 +7,6 @@ not relicensed under Converge's MIT License.
 
 Converge does not broker Claude consumer-subscription login. It uses provider-owned
 API-key or supported cloud authentication and stores no credentials.
+
+[Pi](https://github.com/badlogic/pi-mono) version `0.84.1` (MIT) is an optional,
+user-installed external executable and is not bundled with Converge.

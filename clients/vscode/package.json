@@ -33,7 +33,8 @@
       "restrictedConfigurations": [
         "converge.provider",
         "converge.codexPath",
-        "converge.claudePath"
+        "converge.claudePath",
+        "converge.piPath"
       ]
     },
     "virtualWorkspaces": false
@@ -56,11 +57,13 @@
           "type": "string",
           "enum": [
             "codex",
-            "claude"
+            "claude",
+            "pi"
           ],
           "enumDescriptions": [
             "OpenAI Codex via its local app-server protocol.",
-            "Anthropic Claude via the Claude Agent SDK. Authentication remains provider-owned."
+            "Anthropic Claude via the Claude Agent SDK. Authentication remains provider-owned.",
+            "Pi via its local RPC protocol and Converge's packaged execution-approval gate. Authentication and model selection remain provider-owned."
           ],
           "default": "codex",
           "description": "Agent provider for new and resumed Pairing Sessions. Existing sessions must be resumed with their original provider."
@@ -74,6 +77,11 @@
           "type": "string",
           "default": "claude",
           "description": "Absolute path or executable name for the supported Claude Code CLI."
+        },
+        "converge.piPath": {
+          "type": "string",
+          "default": "pi",
+          "description": "Absolute path or executable name for the supported Pi CLI."
         }
       }
     },
@@ -107,10 +115,12 @@
     "@converge/claude": "*",
     "@converge/codex": "*",
     "@converge/core": "*",
+    "@converge/pi": "*",
     "mermaid": "^11.16.1"
   },
   "files": [
     "dist/extension.cjs",
+    "dist/pi-converge-extension.js",
     "dist/webview.js",
     "media/**",
     "LICENSE",
