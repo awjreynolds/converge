@@ -28,10 +28,15 @@ import {
 const providers: RevokedSessionWalkthroughProvider[] = [
   {
     providerId: "codex",
-    createAgent: (context) =>
-      new CodexAppServerAdapter({
-        transport: new WalkthroughCodexTransport(createScript("codex", context)),
-      }),
+    createAgent: (context) => {
+      codexRequestMethods.length = 0;
+      return new CodexAppServerAdapter({
+        transport: new WalkthroughCodexTransport(
+          createScript("codex", context),
+          codexRequestMethods,
+        ),
+      });
+    },
   },
   {
     providerId: "claude",
@@ -66,8 +71,16 @@ describe.each(providers)("$providerId production-adapter walkthrough", (provider
     ]);
     expect(result.sourceFixtureUnchanged).toBe(true);
     expect(result.temporaryWorkspaceRemoved).toBe(true);
+    if (provider.providerId === "codex") {
+      expect(codexRequestMethods).toContain("account/read");
+      expect(codexRequestMethods.indexOf("account/read")).toBeLessThan(
+        codexRequestMethods.indexOf("thread/start"),
+      );
+    }
   });
 });
+
+const codexRequestMethods: string[] = [];
 
 interface WalkthroughScript {
   next(): Promise<AgentEvent[]>;
@@ -179,7 +192,10 @@ class WalkthroughCodexTransport implements AppServerTransport {
   #closed = false;
   #started = false;
 
-  constructor(private readonly script: WalkthroughScript) {}
+  constructor(
+    private readonly script: WalkthroughScript,
+    private readonly requestMethods: string[],
+  ) {}
 
   async readCliVersion(): Promise<string> {
     return "codex-cli 0.147.0-alpha.6.5";
@@ -189,8 +205,16 @@ class WalkthroughCodexTransport implements AppServerTransport {
 
   async send(message: JsonRpcMessage): Promise<void> {
     if (!("id" in message) || !("method" in message)) return;
+    this.requestMethods.push(message.method);
     if (message.method === "initialize") {
       this.push({ id: message.id, result: {} });
+      return;
+    }
+    if (message.method === "account/read") {
+      this.push({
+        id: message.id,
+        result: { account: { type: "apiKey" }, requiresOpenaiAuth: true },
+      });
       return;
     }
     if (message.method === "thread/start") {
