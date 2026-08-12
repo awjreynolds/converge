@@ -47,7 +47,7 @@ In the target workspace, run **Converge: Start Pairing Session** from the Comman
 
 ## Demonstration
 
-The repository includes [`fixtures/revoked-session`](fixtures/revoked-session), a tiny TypeScript project with one deliberate defect: a revoked session can still issue a refresh token. Its behavioural test starts red.
+The repository includes [`fixtures/revoked-session`](fixtures/revoked-session), a tiny TypeScript project with one deliberate defect: a revoked session can still issue a refresh token. Its existing happy-path test passes, but the revoked-session behavior is not yet represented; Converge creates that red test as the first Change Unit.
 
 Follow the [complete walkthrough](docs/walkthrough.md) to exercise investigation, proposal, discussion or redirection, approval, implementation, native diff inspection, verification, and the final Understanding Check.
 

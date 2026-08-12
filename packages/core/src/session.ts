@@ -237,6 +237,20 @@ export function applySessionAction(
       if (session.changes.some((change) => change.status !== "verified" && change.status !== "rejected")) {
         throw invalid(action.type, "every Change Unit must be verified or rejected");
       }
+      if (
+        !session.changes.some(
+          (change) =>
+            change.status === "verified" &&
+            change.revisions.some((revision) =>
+              revision.tests.some((test) => test.outcome === "passed"),
+            ),
+        )
+      ) {
+        throw invalid(
+          action.type,
+          "at least one verified Change Unit must include passing test evidence",
+        );
+      }
       return {
         ...session,
         status: "understanding",

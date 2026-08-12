@@ -6,13 +6,13 @@ This walkthrough proves the first complete Converge interaction against a determ
 
 Copy `fixtures/revoked-session` to a temporary directory and install dependencies from this workspace, or open the fixture directly when you do not need to preserve its red baseline.
 
-Confirm the starting behaviour:
+Confirm the starting suite:
 
 ```bash
 npm test --workspace @converge/fixture-revoked-session
 ```
 
-The test must fail because `SessionService.refresh()` returns `new-token` for a revoked session.
+The happy-path test must pass. There is deliberately no revoked-session test yet; creating it and observing its expected failure is the first Change Unit.
 
 ## Run the Pairing Session
 

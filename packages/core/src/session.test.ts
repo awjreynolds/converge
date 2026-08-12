@@ -279,6 +279,56 @@ describe("Pairing Session", () => {
     });
   });
 
+  it("does not complete on expected failures or rejected proposals alone", () => {
+    const dependencies = {
+      identities: new SequenceIdentity(["session-1"], ["change-1"]),
+      clock: new SequenceClock([
+        "2026-08-12T09:00:00.000Z",
+        "2026-08-12T09:01:00.000Z",
+      ]),
+    };
+    const expectedFailureProposal = proposal("Add the missing behavior test");
+    const session: PairingSession = {
+      ...createPairingSession(
+        { specification: "Add the missing behavior test", workspaceRoot: "/workspace" },
+        dependencies,
+      ),
+      status: "investigating",
+      changes: [
+        {
+          id: "change-1",
+          status: "verified",
+          currentRevision: 1,
+          revisions: [
+            {
+              ...expectedFailureProposal,
+              revision: 1,
+              proposedAt: "2026-08-12T09:00:00.000Z",
+              tests: [
+                {
+                  command: "npm test",
+                  outcome: "expected-failure",
+                  summary: "Missing behavior reproduced.",
+                },
+              ],
+            },
+          ],
+          humanFeedback: [],
+          discussionReplies: [],
+          dependsOn: [],
+        },
+      ],
+    };
+
+    expect(() =>
+      applySessionAction(
+        session,
+        { type: "implementation-completed", summary: "Done" },
+        dependencies,
+      ),
+    ).toThrow("at least one verified Change Unit must include passing test evidence");
+  });
+
   it("rejects a proposal terminally and reports invalid transitions explicitly", () => {
     const dependencies = {
       identities: new SequenceIdentity(["session-1"], ["change-1"]),
@@ -357,6 +407,13 @@ function verifiedSession(): PairingSession {
         revisions: [
           {
             ...proposal("Reject revoked sessions"),
+            tests: [
+              {
+                command: "npm test",
+                outcome: "passed",
+                summary: "Revoked sessions are rejected.",
+              },
+            ],
             revision: 1,
             proposedAt: "2026-08-12T09:02:00.000Z",
           },
