@@ -106,6 +106,7 @@ export class CodexAppServerAdapter implements AgentPort {
         input: [{ type: "text", text: buildPrompt(request), text_elements: [] }],
         cwd: request.session.workspaceRoot,
         approvalPolicy: "on-request",
+        approvalsReviewer: "user",
         sandboxPolicy:
           request.approvalPolicy === "workspace-write"
             ? {
@@ -189,6 +190,7 @@ export class CodexAppServerAdapter implements AgentPort {
     const result = await this.#request("thread/start", {
       cwd: request.session.workspaceRoot,
       approvalPolicy: "on-request",
+      approvalsReviewer: "user",
       sandbox: request.approvalPolicy === "workspace-write" ? "workspace-write" : "read-only",
       serviceName: "converge",
     });
@@ -202,6 +204,7 @@ export class CodexAppServerAdapter implements AgentPort {
       threadId: requestedId,
       cwd: request.session.workspaceRoot,
       approvalPolicy: "on-request",
+      approvalsReviewer: "user",
       sandbox: request.approvalPolicy === "workspace-write" ? "workspace-write" : "read-only",
     });
     return readThreadId(result, "thread/resume");

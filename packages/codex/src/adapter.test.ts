@@ -187,6 +187,7 @@ describe("CodexAppServerAdapter", () => {
         threadId: "thread-1",
         cwd: "/workspace/converge-fixture",
         approvalPolicy: "on-request",
+        approvalsReviewer: "user",
         sandboxPolicy: { type: "readOnly", networkAccess: false },
         outputSchema: { properties: { type: { const: "proposal" } } },
       },
