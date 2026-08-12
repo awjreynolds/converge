@@ -22,11 +22,12 @@ import {
   type AgentProviderFactory,
   type SelectedAgentProvider,
 } from "./provider-registry.js";
-import type { AgentProviderPresentation } from "./panel.js";
+import type { AgentProviderPresentation, PanelSnapshot } from "./panel.js";
 
 export interface ActiveConvergeExtension {
   controller: ExtensionController;
   host: VsCodeHostCapabilities;
+  currentSnapshot(): PanelSnapshot | undefined;
 }
 
 class UnavailableSessionDriver implements SessionDriver {
@@ -94,19 +95,18 @@ export async function activateWithDependencies(
   );
 
   await controller.initialize();
-  return { controller, host };
+  return { controller, host, currentSnapshot: () => panel.currentSnapshot() };
 }
 
-export async function activate(context: vscode.ExtensionContext): Promise<void> {
+export async function activate(context: vscode.ExtensionContext): Promise<ActiveConvergeExtension> {
   const folders = vscode.workspace.workspaceFolders;
   if (folders?.length !== 1 || folders[0]?.uri.scheme !== "file") {
-    await activateWithDependencies(
+    return activateWithDependencies(
       context,
       new UnavailableSessionDriver(
         "Converge requires one local folder. Open a single local Git workspace and try again.",
       ),
     );
-    return;
   }
 
   const workspaceRoot = folders[0].uri.fsPath;
@@ -116,12 +116,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     selected = selectConfiguredProvider(configuration, productionProviderFactories());
   } catch (error) {
     const message = error instanceof Error ? error.message : "The configured provider is unavailable.";
-    await activateWithDependencies(
+    return activateWithDependencies(
       context,
       new UnavailableSessionDriver(message),
       unavailableProviderPresentation(configuration.get<string>("provider", "codex"), message),
     );
-    return;
   }
   const executablePath = configuration.get<string>("codexPath", "codex");
   const claudePath = configuration.get<string>("claudePath", "claude");
@@ -145,7 +144,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     clock: { now: () => new Date().toISOString() },
   });
   context.subscriptions.push({ dispose: () => void driver.dispose() });
-  await activateWithDependencies(context, driver, presentProvider(selected.descriptor));
+  return activateWithDependencies(context, driver, presentProvider(selected.descriptor));
 }
 
 export interface ProviderConfiguration {

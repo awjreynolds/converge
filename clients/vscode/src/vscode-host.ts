@@ -127,6 +127,10 @@ export class ReasoningPanelProvider implements vscode.WebviewViewProvider {
     await this.view?.webview.postMessage({ type: "snapshot", snapshot });
   }
 
+  currentSnapshot(): PanelSnapshot | undefined {
+    return this.snapshot;
+  }
+
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
     view.webview.options = {

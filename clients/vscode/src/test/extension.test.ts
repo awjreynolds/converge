@@ -2,115 +2,91 @@ import assert from "node:assert/strict";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import * as vscode from "vscode";
-import type { AgentPort, PairingSession, PairingSessionStore } from "@converge/core";
+import type { PairingSession } from "@converge/core";
 
-import { selectConfiguredProvider } from "../extension.js";
-import { ConvergeSessionDriver } from "../runtime-driver.js";
 import { createExtensionController } from "../controller.js";
+import type { ActiveConvergeExtension } from "../extension.js";
 
 const extensionId = "converge-dev.converge-vscode";
 
 export async function run(): Promise<void> {
-  await activatesAndRegistersPublicCommands();
-  console.log("PASS open-panel activates the extension and registers public commands");
-  await selectsProvidersFromRealWorkspaceConfiguration();
-  console.log("PASS provider selection uses VS Code workspace configuration without live calls");
-  await rejectsMissingProviderExecutableBeforeSessionPersistence();
-  console.log("PASS missing provider executable is rejected before session persistence");
-  await rejectsProviderMismatchBeforeExecution();
-  console.log("PASS persisted provider mismatch is diagnosed before execution");
-  await migratesLegacyWorkspaceStateToCodex();
-  console.log("PASS legacy workspace state defaults to the Codex provider");
-  await trustGatesActionsWithoutLiveProvider();
-  console.log("PASS untrusted host gates provider execution without a live call");
-}
-
-const inertAgent: AgentPort = {
-  async validate() {},
-  async *run() {},
-  async cancel() {},
-  async respondToExecutionApproval() {},
-  async dispose() {},
-};
-
-async function selectsProvidersFromRealWorkspaceConfiguration(): Promise<void> {
-  const configuration = vscode.workspace.getConfiguration("converge");
-  assert.equal(configuration.get<string>("provider", "codex"), "claude");
-
-  const selected = selectConfiguredProvider(configuration, {
-    codex: () => inertAgent,
-    claude: () => inertAgent,
-  });
-  assert.equal(selected.descriptor.id, "claude");
-  assert.equal(
-    await selected.create({
-      workspaceRoot: "/synthetic",
-      codexPath: "unused",
-      claudePath: "unused",
-    }),
-    inertAgent,
-  );
-
-  assert.throws(
-    () => selectConfiguredProvider(configuration, { codex: () => inertAgent }),
-    /Claude support is not available in this Converge build/,
-  );
-}
-
-async function rejectsMissingProviderExecutableBeforeSessionPersistence(): Promise<void> {
-  const configuration = vscode.workspace.getConfiguration("converge");
-  assert.equal(
-    configuration.get<string>("claudePath"),
-    "__converge_test_missing_claude_executable__",
-  );
-
-  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  assert.ok(workspaceRoot);
-  const sessionsDirectory = join(workspaceRoot, ".converge", "sessions");
-  const before = await listIfPresent(sessionsDirectory);
-
-  await assert.doesNotReject(async () => {
-    await vscode.commands.executeCommand(
-      "converge.startSession",
-      "Validate the selected provider without sending repository content",
-    );
-  });
-
-  assert.deepEqual(await listIfPresent(sessionsDirectory), before);
-}
-
-async function listIfPresent(directory: string): Promise<string[]> {
-  try {
-    return (await readdir(directory)).sort();
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return [];
-    throw error;
+  const scenario = process.env.CONVERGE_EXTENSION_HOST_SCENARIO;
+  switch (scenario) {
+    case "provider-selection":
+      await selectsConfiguredProviderThroughActivatedExtension();
+      await injectedTrustCapabilityGatesProviderExecution();
+      return;
+    case "missing-authentication":
+      await reportsMissingAuthenticationThroughPublicCommand();
+      return;
+    case "unsupported-version":
+      await reportsUnsupportedVersionThroughPublicCommand();
+      return;
+    case "provider-mismatch":
+      await reportsWorkspaceStateProviderMismatchThroughActivatedExtension();
+      return;
+    case "legacy-migration":
+      await migratesLegacyWorkspaceStateThroughActivatedExtension();
+      return;
+    default:
+      throw new Error(`Unknown Extension Host scenario ${JSON.stringify(scenario)}`);
   }
 }
 
-async function rejectsProviderMismatchBeforeExecution(): Promise<void> {
-  const store: PairingSessionStore = {
-    async load() {
-      return undefined;
-    },
-    async save() {},
-    async list() {
-      return [];
-    },
-  };
-  const driver = new ConvergeSessionDriver({
-    agent: inertAgent,
-    providerId: "claude",
-    legacyProviderId: "codex",
-    store,
-    workspaceRoot: "/synthetic",
-    identities: { nextSessionId: () => "unused", nextChangeUnitId: () => "unused" },
-    clock: { now: () => "2026-08-12T00:00:00.000Z" },
-  });
+async function selectsConfiguredProviderThroughActivatedExtension(): Promise<void> {
+  const active = await activateExtension();
+  assert.equal(vscode.workspace.getConfiguration("converge").get("provider"), "claude");
+  assert.equal(active.currentSnapshot()?.provider.id, "claude");
+  assert.equal(active.currentSnapshot()?.workspaceTrusted, vscode.workspace.isTrusted);
+
+  const commands = await vscode.commands.getCommands(true);
+  assert.ok(commands.includes("converge.openPanel"));
+  assert.ok(commands.includes("converge.startSession"));
+  console.log("PASS activated production composition selects the configured provider");
+}
+
+async function reportsMissingAuthenticationThroughPublicCommand(): Promise<void> {
+  const active = await activateExtension();
+  const before = await sessionFiles();
+
+  await vscode.commands.executeCommand(
+    "converge.startSession",
+    "Validate authentication without sending workspace content",
+  );
+
+  assert.match(
+    active.currentSnapshot()?.notice?.message ?? "",
+    /Claude authentication is not configured/,
+  );
+  assert.equal(active.currentSnapshot()?.busy, false);
+  assert.deepEqual(await sessionFiles(), before);
+  console.log("PASS public command publishes missing-authentication failure before persistence");
+}
+
+async function reportsUnsupportedVersionThroughPublicCommand(): Promise<void> {
+  const active = await activateExtension();
+  const before = await sessionFiles();
+
+  await vscode.commands.executeCommand(
+    "converge.startSession",
+    "Validate provider compatibility without sending workspace content",
+  );
+
+  assert.match(
+    active.currentSnapshot()?.notice?.message ?? "",
+    /Unsupported Claude Code version .*Converge supports 2\.1\.228/,
+  );
+  assert.equal(active.currentSnapshot()?.busy, false);
+  assert.deepEqual(await sessionFiles(), before);
+  console.log("PASS public command publishes unsupported-version failure before persistence");
+}
+
+async function reportsWorkspaceStateProviderMismatchThroughActivatedExtension(): Promise<void> {
+  const active = await activateExtension();
   const persisted: PairingSession = {
     id: "codex-session",
-    specification: "Do not execute this",
-    workspaceRoot: "/synthetic",
+    specification: "Do not execute this session with another provider",
+    workspaceRoot: workspaceRoot(),
     status: "awaiting-human",
     createdAt: "2026-08-12T00:00:00.000Z",
     updatedAt: "2026-08-12T00:00:00.000Z",
@@ -119,18 +95,24 @@ async function rejectsProviderMismatchBeforeExecution(): Promise<void> {
     progress: [],
   };
 
-  await assert.rejects(
-    driver.loadSession(persisted),
+  await active.host.writeSession(persisted);
+  await active.controller.initialize();
+
+  assert.equal(active.currentSnapshot()?.provider.id, "claude");
+  assert.equal(active.currentSnapshot()?.session, undefined);
+  assert.match(
+    active.currentSnapshot()?.notice?.message ?? "",
     /belongs to provider codex, not configured provider claude/,
   );
+  console.log("PASS activated production composition diagnoses workspaceState provider mismatch");
 }
 
-async function migratesLegacyWorkspaceStateToCodex(): Promise<void> {
-  const driver = sessionDriver("codex");
+async function migratesLegacyWorkspaceStateThroughActivatedExtension(): Promise<void> {
+  const active = await activateExtension();
   const legacy = {
     id: "legacy-session",
-    specification: "Resume this",
-    workspaceRoot: "/synthetic",
+    specification: "Resume this legacy Pairing Session",
+    workspaceRoot: workspaceRoot(),
     status: "awaiting-human",
     createdAt: "2026-08-12T00:00:00.000Z",
     updatedAt: "2026-08-12T00:00:00.000Z",
@@ -139,14 +121,21 @@ async function migratesLegacyWorkspaceStateToCodex(): Promise<void> {
     progress: [],
   };
 
-  const session = await driver.loadSession(legacy);
-  assert.deepEqual(session?.agent, {
+  await active.host.writeSession(legacy as unknown as PairingSession);
+  await active.controller.initialize();
+
+  assert.deepEqual(active.currentSnapshot()?.session?.agent, {
     providerId: "codex",
     conversationId: "legacy-thread",
   });
+  assert.deepEqual((await active.host.readSession())?.agent, {
+    providerId: "codex",
+    conversationId: "legacy-thread",
+  });
+  console.log("PASS activated production composition migrates legacy workspaceState");
 }
 
-async function trustGatesActionsWithoutLiveProvider(): Promise<void> {
+async function injectedTrustCapabilityGatesProviderExecution(): Promise<void> {
   let starts = 0;
   const controller = createExtensionController({
     provider: {
@@ -187,37 +176,29 @@ async function trustGatesActionsWithoutLiveProvider(): Promise<void> {
   await controller.initialize();
   await controller.handlePanelAction({ type: "start-session", specification: "Do not run" });
   assert.equal(starts, 0);
+  console.log("PASS injected untrusted host capability gates provider execution");
 }
 
-function sessionDriver(providerId: string): ConvergeSessionDriver {
-  const store: PairingSessionStore = {
-    async load() {
-      return undefined;
-    },
-    async save() {},
-    async list() {
-      return [];
-    },
-  };
-  return new ConvergeSessionDriver({
-    agent: inertAgent,
-    providerId,
-    legacyProviderId: "codex",
-    store,
-    workspaceRoot: "/synthetic",
-    identities: { nextSessionId: () => "unused", nextChangeUnitId: () => "unused" },
-    clock: { now: () => "2026-08-12T00:00:00.000Z" },
-  });
+async function activateExtension(): Promise<ActiveConvergeExtension> {
+  const extension = vscode.extensions.getExtension<ActiveConvergeExtension>(extensionId);
+  assert.ok(extension, `Expected ${extensionId} to be installed in the Extension Host`);
+  const active = await extension.activate();
+  assert.ok(active, "Expected activation to expose the running Converge composition");
+  return active;
 }
 
-async function activatesAndRegistersPublicCommands(): Promise<void> {
-    const extension = vscode.extensions.getExtension(extensionId);
-    assert.ok(extension, `Expected ${extensionId} to be installed in the Extension Host`);
+function workspaceRoot(): string {
+  const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  assert.ok(root, "Expected one local Extension Host workspace");
+  return root;
+}
 
-    await vscode.commands.executeCommand("converge.openPanel");
-
-    assert.equal(extension.isActive, true);
-    const commands = await vscode.commands.getCommands(true);
-    assert.ok(commands.includes("converge.openPanel"));
-    assert.ok(commands.includes("converge.startSession"));
+async function sessionFiles(): Promise<string[]> {
+  const directory = join(workspaceRoot(), ".converge", "sessions");
+  try {
+    return (await readdir(directory)).sort();
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return [];
+    throw error;
+  }
 }
