@@ -24,7 +24,10 @@ and offers **Stop agent** while a turn is active.
 The packaged extension uses a local Claude Code installation instead of embedding Anthropic's large
 platform binary. Set `converge.claudePath` when `claude` is not on VS Code's process path. Converge
 checks Claude Code `2.1.228` and provider-owned API/cloud authentication before it persists a new
-Pairing Session.
+Pairing Session. Direct Claude use requires `ANTHROPIC_API_KEY`; Bedrock requires
+`AWS_BEARER_TOKEN_BEDROCK` or an explicit access/secret key pair; Vertex requires
+`GOOGLE_APPLICATION_CREDENTIALS`; and Foundry requires `ANTHROPIC_FOUNDRY_API_KEY` or
+`ANTHROPIC_FOUNDRY_AUTH_TOKEN`. Codex uses the account configured by `codex login`.
 
 ## Extension Host tests
 
@@ -35,7 +38,10 @@ workspace, and verifies the extension's public activation and command surface:
 npm run test:extension-host --workspace converge-vscode
 ```
 
-The fixture selects Claude to exercise the production configuration path at activation. Tests use
-inert provider factories for behavior and never start an agent or contact an external service. On
-headless Linux, run the command through `xvfb-run -a`; macOS can run it directly. The downloaded VS
-Code runtime is cached under `clients/vscode/.vscode-test/` and is ignored by Git.
+The tests launch isolated fixture workspaces and inspect the activated production extension for
+provider selection, missing authentication, unsupported versions, provider mismatch, and legacy
+migration. They never run a provider turn, contact an external service, or send repository content.
+Workspace trust itself cannot be toggled by this harness, so that boundary remains covered through
+the injected host-capability test. On headless Linux, run the command through `xvfb-run -a`; macOS
+can run it directly. The downloaded VS Code runtime is cached under
+`clients/vscode/.vscode-test/` and is ignored by Git.

@@ -41,7 +41,15 @@ npm run package:vscode
 code --install-extension clients/vscode/converge-vscode-0.1.0.vsix
 ```
 
-In the target workspace, select `converge.provider` (`codex` by default), then run **Converge: Start Pairing Session** from the Command Palette or open the Converge activity-bar view. Configure `converge.codexPath` or `converge.claudePath` when the selected local CLI is not on VS Code's process path. Converge validates the supported executable version and provider-owned Claude API/cloud authentication before creating a session; it never asks for or stores provider credentials.
+In the target workspace, select `converge.provider` (`codex` by default), then run **Converge: Start Pairing Session** from the Command Palette or open the Converge activity-bar view. Configure `converge.codexPath` or `converge.claudePath` when the selected local CLI is not on VS Code's process path. Converge validates the supported executable version and provider-owned authentication before creating a session; it never asks for or stores provider credentials.
+
+- Codex uses the account already configured by `codex login`.
+- Direct Claude access requires `ANTHROPIC_API_KEY`.
+- Claude on Bedrock requires `AWS_BEARER_TOKEN_BEDROCK`, or both `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`.
+- Claude on Vertex requires `GOOGLE_APPLICATION_CREDENTIALS`.
+- Claude on Foundry requires `ANTHROPIC_FOUNDRY_API_KEY` or `ANTHROPIC_FOUNDRY_AUTH_TOKEN`.
+
+Set only one Claude cloud selector. Because checking ambient cloud identity would require a provider call, Converge deliberately requires explicit provider-owned credentials and fails before reading workspace content when they are absent.
 
 ## Demonstration
 
