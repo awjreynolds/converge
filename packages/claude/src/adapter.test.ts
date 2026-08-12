@@ -76,11 +76,74 @@ describe("ClaudeAgentAdapter", () => {
     await adapter.dispose();
   });
 
+  it.each([
+    ["Bedrock", { CLAUDE_CODE_USE_BEDROCK: "1" }],
+    ["Vertex", { CLAUDE_CODE_USE_VERTEX: "true" }],
+    ["Foundry", { CLAUDE_CODE_USE_FOUNDRY: "1" }],
+  ])("does not treat the %s cloud selector as credential proof", async (_provider, providerEnvironment) => {
+    const adapter = new ClaudeAgentAdapter({
+      executablePath: process.execPath,
+      supportedCliVersion: process.versions.node,
+      providerEnvironment,
+    });
+
+    await expect(adapter.validate()).rejects.toThrow("credentials are not configured");
+    await adapter.dispose();
+  });
+
+  it.each([
+    {
+      provider: "Bedrock access key",
+      environment: {
+        CLAUDE_CODE_USE_BEDROCK: "1",
+        AWS_ACCESS_KEY_ID: "test-access-key",
+        AWS_SECRET_ACCESS_KEY: "test-secret-key",
+      },
+    },
+    {
+      provider: "Bedrock bearer token",
+      environment: {
+        CLAUDE_CODE_USE_BEDROCK: "1",
+        AWS_BEARER_TOKEN_BEDROCK: "test-bearer-token",
+      },
+    },
+    {
+      provider: "Vertex service credentials",
+      environment: {
+        CLAUDE_CODE_USE_VERTEX: "1",
+        GOOGLE_APPLICATION_CREDENTIALS: "/provider-owned/service-account.json",
+      },
+    },
+    {
+      provider: "Foundry API key",
+      environment: {
+        CLAUDE_CODE_USE_FOUNDRY: "1",
+        ANTHROPIC_FOUNDRY_API_KEY: "test-foundry-key",
+      },
+    },
+    {
+      provider: "Foundry auth token",
+      environment: {
+        CLAUDE_CODE_USE_FOUNDRY: "1",
+        ANTHROPIC_FOUNDRY_AUTH_TOKEN: "test-foundry-token",
+      },
+    },
+  ])("accepts explicit provider-owned $provider configuration", async ({ environment }) => {
+    const adapter = new ClaudeAgentAdapter({
+      executablePath: process.execPath,
+      supportedCliVersion: process.versions.node,
+      providerEnvironment: environment,
+    });
+
+    await expect(adapter.validate()).resolves.toBeUndefined();
+    await adapter.dispose();
+  });
+
   it("fails validation clearly when the local Claude version is unsupported", async () => {
     const adapter = new ClaudeAgentAdapter({
       executablePath: process.execPath,
       supportedCliVersion: "2.1.228",
-      providerEnvironment: { ...process.env, CLAUDE_CODE_USE_BEDROCK: "1" },
+      providerEnvironment: { ...process.env, ANTHROPIC_API_KEY: "provider-owned-test-key" },
     });
 
     await expect(adapter.validate()).rejects.toThrow(

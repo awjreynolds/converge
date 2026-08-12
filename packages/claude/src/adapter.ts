@@ -105,15 +105,50 @@ export class ClaudeAgentAdapter implements AgentPort {
 }
 
 function requireProviderOwnedAuthentication(environment: NodeJS.ProcessEnv): void {
-  const hasApiKey = hasValue(environment.ANTHROPIC_API_KEY);
-  const usesCloudProvider = [
-    environment.CLAUDE_CODE_USE_BEDROCK,
-    environment.CLAUDE_CODE_USE_VERTEX,
-    environment.CLAUDE_CODE_USE_FOUNDRY,
-  ].some(isEnabled);
-  if (hasApiKey || usesCloudProvider) return;
+  const cloudModes = [
+    ["Bedrock", environment.CLAUDE_CODE_USE_BEDROCK],
+    ["Vertex", environment.CLAUDE_CODE_USE_VERTEX],
+    ["Foundry", environment.CLAUDE_CODE_USE_FOUNDRY],
+  ].filter(([, value]) => isEnabled(value));
+  if (cloudModes.length > 1) {
+    throw new Error(
+      "Claude authentication is ambiguous. Enable only one of Bedrock, Vertex, or Foundry.",
+    );
+  }
+
+  const cloudMode = cloudModes[0]?.[0];
+  if (cloudMode === "Bedrock") {
+    if (
+      hasValue(environment.AWS_BEARER_TOKEN_BEDROCK) ||
+      (hasValue(environment.AWS_ACCESS_KEY_ID) && hasValue(environment.AWS_SECRET_ACCESS_KEY))
+    ) {
+      return;
+    }
+    throw new Error(
+      "Claude Bedrock credentials are not configured. Set AWS_BEARER_TOKEN_BEDROCK or both AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY. Ambient AWS credentials cannot be verified without a provider call, so Converge fails safely before reading repository content.",
+    );
+  }
+  if (cloudMode === "Vertex") {
+    if (hasValue(environment.GOOGLE_APPLICATION_CREDENTIALS)) return;
+    throw new Error(
+      "Claude Vertex credentials are not configured. Set GOOGLE_APPLICATION_CREDENTIALS to provider-owned application credentials. Ambient Google credentials cannot be verified without a provider call, so Converge fails safely before reading repository content.",
+    );
+  }
+  if (cloudMode === "Foundry") {
+    if (
+      hasValue(environment.ANTHROPIC_FOUNDRY_API_KEY) ||
+      hasValue(environment.ANTHROPIC_FOUNDRY_AUTH_TOKEN)
+    ) {
+      return;
+    }
+    throw new Error(
+      "Claude Foundry credentials are not configured. Set ANTHROPIC_FOUNDRY_API_KEY or ANTHROPIC_FOUNDRY_AUTH_TOKEN. Ambient Azure credentials cannot be verified without a provider call, so Converge fails safely before reading repository content.",
+    );
+  }
+
+  if (hasValue(environment.ANTHROPIC_API_KEY)) return;
   throw new Error(
-    "Claude authentication is not configured. Set provider-owned ANTHROPIC_API_KEY or enable a supported Bedrock, Vertex, or Foundry configuration before starting a Pairing Session.",
+    "Claude authentication is not configured. Set provider-owned ANTHROPIC_API_KEY or configure explicit Bedrock, Vertex, or Foundry credentials before starting a Pairing Session.",
   );
 }
 

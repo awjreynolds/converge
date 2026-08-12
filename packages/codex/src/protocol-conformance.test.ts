@@ -8,6 +8,8 @@ import fileApprovalResponse from "../protocol-snapshots/generated/FileChangeRequ
 import permissionsApprovalParams from "../protocol-snapshots/generated/PermissionsRequestApprovalParams.json" with { type: "json" };
 import permissionsApprovalResponse from "../protocol-snapshots/generated/PermissionsRequestApprovalResponse.json" with { type: "json" };
 import initializeParams from "../protocol-snapshots/generated/v1/InitializeParams.json" with { type: "json" };
+import getAccountParams from "../protocol-snapshots/generated/v2/GetAccountParams.json" with { type: "json" };
+import getAccountResponse from "../protocol-snapshots/generated/v2/GetAccountResponse.json" with { type: "json" };
 import threadResumeParams from "../protocol-snapshots/generated/v2/ThreadResumeParams.json" with { type: "json" };
 import threadStartParams from "../protocol-snapshots/generated/v2/ThreadStartParams.json" with { type: "json" };
 import turnInterruptParams from "../protocol-snapshots/generated/v2/TurnInterruptParams.json" with { type: "json" };
@@ -21,6 +23,7 @@ import { matchesVendoredSchema } from "../test-support/vendored-schema-assertion
 
 const clientRequestSchemas: Record<string, unknown> = {
   initialize: initializeParams,
+  "account/read": getAccountParams,
   "thread/start": threadStartParams,
   "thread/resume": threadResumeParams,
   "turn/start": turnStartParams,
@@ -43,6 +46,12 @@ class ConformanceTransport implements AppServerTransport {
     this.sent.push(message);
     if (!("id" in message) || !("method" in message)) return;
     if (message.method === "initialize") this.push({ id: message.id, result: {} });
+    if (message.method === "account/read") {
+      this.push({
+        id: message.id,
+        result: { account: { type: "apiKey" }, requiresOpenaiAuth: true },
+      });
+    }
     if (message.method === "thread/start" || message.method === "thread/resume") {
       this.push({ id: message.id, result: { thread: { id: "thread-conformance" } } });
     }
@@ -105,6 +114,16 @@ const request = (conversationId?: string): AgentRunRequest => ({
 });
 
 describe("pinned Codex app-server protocol schemas", () => {
+  it("pins the account/read response used for authentication preflight", () => {
+    expect(
+      matchesVendoredSchema(
+        { account: { type: "apiKey" }, requiresOpenaiAuth: true },
+        getAccountResponse,
+      ),
+    ).toBe(true);
+    expect(matchesVendoredSchema({ account: null }, getAccountResponse)).toBe(false);
+  });
+
   it.each([
     [undefined, "thread/start"],
     ["thread-conformance", "thread/resume"],

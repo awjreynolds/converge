@@ -17,6 +17,10 @@ class ScriptedTransport implements AppServerTransport {
     readonly cliVersion = "codex-cli 0.147.0-alpha.6.5",
     private readonly onSend: (message: JsonRpcMessage, transport: ScriptedTransport) => void,
     private readonly beforeVersion?: Promise<void>,
+    private readonly accountResponse: unknown = {
+      account: { type: "apiKey" },
+      requiresOpenaiAuth: true,
+    },
   ) {}
 
   async readCliVersion(): Promise<string> {
@@ -30,6 +34,9 @@ class ScriptedTransport implements AppServerTransport {
     if (this.closed) throw new Error("Scripted app-server transport is closed.");
     this.sent.push(message);
     this.onSend(message, this);
+    if ("id" in message && "method" in message && message.method === "account/read") {
+      this.push({ id: message.id, result: this.accountResponse });
+    }
   }
 
   push(message: JsonRpcMessage): void {
@@ -126,8 +133,49 @@ describe("CodexAppServerAdapter", () => {
     expect(transport.sent).toEqual([
       expect.objectContaining({ method: "initialize" }),
       { method: "initialized" },
+      expect.objectContaining({ method: "account/read", params: { refreshToken: false } }),
     ]);
     expect(transport.sent.some((message) => "method" in message && message.method === "thread/start")).toBe(false);
+    await adapter.dispose();
+  });
+
+  it("fails validation before any session starts when Codex has no usable account", async () => {
+    const transport = new ScriptedTransport(
+      undefined,
+      (message, fake) => {
+        if ("id" in message && "method" in message && message.method === "initialize") {
+          fake.push({ id: message.id, result: { userAgent: "codex" } });
+        }
+      },
+      undefined,
+      { account: null, requiresOpenaiAuth: true },
+    );
+    const adapter = new CodexAppServerAdapter({ transport });
+
+    await expect(adapter.validate()).rejects.toThrow(
+      "Codex authentication is not configured. Run `codex login`",
+    );
+    expect(transport.sent.some((message) => "method" in message && message.method === "thread/start")).toBe(false);
+    await adapter.dispose();
+  });
+
+  it("redacts account/read failures while preserving setup guidance", async () => {
+    const transport = new ScriptedTransport(undefined, (message, fake) => {
+      if (!("id" in message) || !("method" in message)) return;
+      if (message.method === "initialize") fake.push({ id: message.id, result: {} });
+      if (message.method === "account/read") {
+        fake.push({
+          id: message.id,
+          error: { code: -32_000, message: "Authorization failed for Bearer sk-secret" },
+        });
+      }
+    });
+    const adapter = new CodexAppServerAdapter({ transport });
+
+    const error = await adapter.validate().catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("Run `codex login`");
+    expect((error as Error).message).not.toContain("sk-secret");
     await adapter.dispose();
   });
 
@@ -200,6 +248,7 @@ describe("CodexAppServerAdapter", () => {
     expect(transport.sent.map((message) => ("method" in message ? message.method : undefined))).toEqual([
       "initialize",
       "initialized",
+      "account/read",
       "thread/start",
       "turn/start",
     ]);

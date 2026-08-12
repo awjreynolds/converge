@@ -80,6 +80,12 @@ class CodexConformanceTransport implements AppServerTransport {
       case "initialize":
         this.push({ id: message.id, result: {} });
         return;
+      case "account/read":
+        this.push({
+          id: message.id,
+          result: { account: { type: "apiKey" }, requiresOpenaiAuth: true },
+        });
+        return;
       case "thread/start":
         this.push({ id: message.id, result: { thread: { id: this.#threadId } } });
         return;
