@@ -14,12 +14,29 @@ describe("shipped Pi gate extension", () => {
     expect(confirmCount).toBe(0);
   });
 
-  it("uses the exact sentinel to gate every mutating tool", async () => {
+  it("allows the exact read-only set and gates the exact mutating set", async () => {
     const { handlers } = loadGate();
     const calls: unknown[][] = [];
-    const result = await handlers.tool_call?.({ toolName: "bash", input: { command: "npm test" } }, { ui: { confirm: async (...args: unknown[]) => { calls.push(args); return false; } } });
-    expect(calls).toEqual([[PI_APPROVAL_SENTINEL, JSON.stringify({ toolName: "bash", operation: "npm test", reason: "Pi requested a workspace mutation." })]]);
-    expect(result).toEqual({ block: true, reason: "The engineer denied this operation." });
+    const context = { ui: { confirm: async (...args: unknown[]) => { calls.push(args); return false; } } };
+
+    for (const toolName of ["read", "grep", "find", "ls", "converge_result"]) {
+      await expect(handlers.tool_call?.({ toolName, input: {} }, context)).resolves.toBeUndefined();
+    }
+    for (const [toolName, input, operation] of [
+      ["bash", { command: "npm test" }, "npm test"],
+      ["edit", { path: "src/auth.ts" }, "edit src/auth.ts"],
+      ["write", { path: "src/auth.ts" }, "write src/auth.ts"],
+    ] as const) {
+      await expect(handlers.tool_call?.({ toolName, input }, context)).resolves.toEqual({
+        block: true,
+        reason: "The engineer denied this operation.",
+      });
+      expect(calls.at(-1)).toEqual([
+        PI_APPROVAL_SENTINEL,
+        JSON.stringify({ toolName, operation, reason: "Pi requested a workspace mutation." }),
+      ]);
+    }
+    expect(calls).toHaveLength(3);
   });
 
   it("records structured output only in successful converge_result details", async () => {
