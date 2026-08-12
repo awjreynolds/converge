@@ -11,6 +11,7 @@ export interface ExtensionHostCapabilities {
 }
 
 export interface SessionDriver {
+  loadSession?(): Promise<PairingSession | undefined>;
   startSession(specification: string): Promise<PairingSession>;
   respondToChange(
     session: PairingSession,
@@ -21,6 +22,8 @@ export interface SessionDriver {
   answerUnderstanding(session: PairingSession, answer: string): Promise<PairingSession>;
   confirmConvergence(session: PairingSession): Promise<PairingSession>;
   respondToExecutionApproval(requestId: string, decision: "approved" | "denied"): Promise<void>;
+  onExecutionApproval?(handler: (approval: ExecutionApproval) => void): void;
+  dispose?(): Promise<void>;
 }
 
 export interface ExtensionControllerDependencies {
@@ -88,9 +91,12 @@ export function createExtensionController(
     }
   };
 
-  return {
+  const controller: ExtensionController = {
     async initialize() {
-      session = await dependencies.host.readSession();
+      session =
+        (await dependencies.driver.loadSession?.()) ??
+        (await dependencies.host.readSession());
+      if (session) await dependencies.host.writeSession(session);
       await publish();
     },
     async publish() {
@@ -192,4 +198,8 @@ export function createExtensionController(
       }
     },
   };
+  dependencies.driver.onExecutionApproval?.((approval) => {
+    controller.requestExecutionApproval(approval);
+  });
+  return controller;
 }

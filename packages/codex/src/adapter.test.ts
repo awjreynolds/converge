@@ -374,6 +374,30 @@ describe("CodexAppServerAdapter", () => {
     });
   });
 
+  it("keeps the active Change Unit identity when a revision response omits it", async () => {
+    const revised = await runCompletedTurn(
+      {
+        type: "proposal",
+        proposal: {
+          title: "Keep the SessionLookup seam",
+          intent: "Enforce revocation through the existing lookup.",
+          rationale: "The engineer redirected repository access.",
+          affectedFiles: [{ path: "src/session-service.ts" }],
+          risks: [],
+          evidence: [],
+          visualisations: [],
+          tests: [],
+        },
+      },
+      { phase: "revise", changeId: "change-1" },
+    );
+
+    expect(revised.events.at(-1)).toMatchObject({
+      type: "proposal",
+      changeId: "change-1",
+    });
+  });
+
   it("surfaces malformed structured output as an actionable error event", async () => {
     const result = await runCompletedTurn("not json", { phase: "summarize" });
     expect(result.events.at(-1)).toEqual({

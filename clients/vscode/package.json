@@ -88,7 +88,8 @@
     "mermaid": "^11.16.1"
   },
   "files": [
-    "dist/**",
+    "dist/extension.cjs",
+    "dist/webview.js",
     "media/**",
     "LICENSE",
     "README.md",

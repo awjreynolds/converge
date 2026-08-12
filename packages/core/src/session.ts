@@ -146,7 +146,7 @@ export function applySessionAction(
 
     case "revision-started": {
       const change = getChange(session, action.changeId, action.type);
-      requireChangeStatus(change, action.type, ["redirected"]);
+      requireChangeStatus(change, action.type, ["redirected", "discussing"]);
       const updatedAt = dependencies.clock.now();
       return replaceChange(session, { ...change, status: "revising" }, { status: "investigating", updatedAt });
     }

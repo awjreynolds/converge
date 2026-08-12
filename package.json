@@ -14,8 +14,8 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "npm run build --workspace @converge/vscode",
-    "package:vscode": "npm run package --workspace @converge/vscode",
+    "build": "npm run build --workspace converge-vscode",
+    "package:vscode": "npm run package --workspace converge-vscode",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",

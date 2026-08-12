@@ -1,5 +1,7 @@
 import * as vscode from "vscode";
-import type { PairingSession } from "@converge/core";
+import { randomUUID } from "node:crypto";
+import { JsonFilePairingSessionStore, type PairingSession } from "@converge/core";
+import { CodexAppServerAdapter } from "@converge/codex";
 
 import {
   createExtensionController,
@@ -11,6 +13,7 @@ import {
   registerVscodeHost,
   type VsCodeHostCapabilities,
 } from "./vscode-host.js";
+import { ConvergeSessionDriver } from "./runtime-driver.js";
 
 export interface ActiveConvergeExtension {
   controller: ExtensionController;
@@ -18,10 +21,10 @@ export interface ActiveConvergeExtension {
 }
 
 class UnavailableSessionDriver implements SessionDriver {
+  constructor(private readonly reason: string) {}
+
   private unavailable(): never {
-    throw new Error(
-      "The Converge agent runtime is unavailable. Install a build with a configured Codex adapter.",
-    );
+    throw new Error(this.reason);
   }
 
   async startSession(_specification: string): Promise<PairingSession> {
@@ -83,7 +86,34 @@ export async function activateWithDependencies(
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  await activateWithDependencies(context, new UnavailableSessionDriver());
+  const folders = vscode.workspace.workspaceFolders;
+  if (folders?.length !== 1 || folders[0]?.uri.scheme !== "file") {
+    await activateWithDependencies(
+      context,
+      new UnavailableSessionDriver(
+        "Converge requires one local folder. Open a single local Git workspace and try again.",
+      ),
+    );
+    return;
+  }
+
+  const workspaceRoot = folders[0].uri.fsPath;
+  const executablePath = vscode.workspace
+    .getConfiguration("converge")
+    .get<string>("codexPath", "codex");
+  const agent = new CodexAppServerAdapter({ executablePath });
+  const driver = new ConvergeSessionDriver({
+    agent,
+    store: JsonFilePairingSessionStore.forWorkspace(workspaceRoot),
+    workspaceRoot,
+    identities: {
+      nextSessionId: () => `session-${randomUUID()}`,
+      nextChangeUnitId: () => `C${randomUUID().slice(0, 8)}`,
+    },
+    clock: { now: () => new Date().toISOString() },
+  });
+  context.subscriptions.push({ dispose: () => void driver.dispose() });
+  await activateWithDependencies(context, driver);
 }
 
 export function deactivate(): void {}

@@ -22,10 +22,10 @@ The test must fail because `SessionService.refresh()` returns `new-token` for a 
 4. Inspect the agent's investigation progress and first proposed Change Unit.
 5. Discuss the proposed behaviour if its rationale is unclear.
 6. Redirect any proposal that bypasses `SessionLookup`; require the existing persistence seam to remain intact.
-7. Approve the revised Change Unit. Treat any Codex command or file approval as a separate execution decision.
+7. Approve the revised Change Unit, then choose **Apply approved change**. Treat any Codex command or file approval as a separate execution decision.
 8. Inspect the resulting files with **View Diff** in VS Code.
-9. Let Converge run verification. The behavioural test must pass.
-10. Review the final system model and answer the targeted Understanding Check.
+9. Choose **Run verification**. The behavioural test must pass.
+10. Choose **Complete implementation**, review the final system model, and answer the targeted Understanding Check.
 
 ## Expected result
 

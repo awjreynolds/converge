@@ -23,6 +23,8 @@ export interface CodexAppServerAdapterOptions {
 
 interface ActiveRun {
   threadId: string;
+  phase: AgentRunRequest["phase"];
+  changeId?: string;
   turnId?: string;
   finalMessage?: string;
   queue: AsyncQueue<AgentEvent>;
@@ -93,7 +95,12 @@ export class CodexAppServerAdapter implements AgentPort {
       ? await this.#resumeThread(request)
       : await this.#startThread(request);
     const queue = new AsyncQueue<AgentEvent>();
-    const active: ActiveRun = { threadId, queue };
+    const active: ActiveRun = {
+      threadId,
+      phase: request.phase,
+      ...(request.changeId === undefined ? {} : { changeId: request.changeId }),
+      queue,
+    };
     this.#activeRun = active;
 
     if (!request.session.codexThreadId) {
@@ -352,7 +359,15 @@ export class CodexAppServerAdapter implements AgentPort {
         return;
       }
       try {
-        active.queue.push(parseAgentEvent(active.finalMessage));
+        const event = parseAgentEvent(active.finalMessage);
+        active.queue.push(
+          event.type === "proposal" &&
+            event.changeId === undefined &&
+            (active.phase === "discuss" || active.phase === "revise") &&
+            active.changeId !== undefined
+            ? { ...event, changeId: active.changeId }
+            : event,
+        );
       } catch (error) {
         active.queue.push({ type: "error", message: asError(error, "Invalid Codex response").message });
       } finally {

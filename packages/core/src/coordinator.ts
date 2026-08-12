@@ -94,6 +94,10 @@ export class PairingSessionCoordinator {
           changeId: requireChangeId(phase, changeId),
         });
       case "discuss":
+        return this.transition(session, {
+          type: "revision-started",
+          changeId: requireChangeId(phase, changeId),
+        });
       case "summarize":
       case "assess-understanding":
         return session;
