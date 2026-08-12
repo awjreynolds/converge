@@ -25,6 +25,7 @@ class ScriptedTransport implements AppServerTransport {
   async start(): Promise<void> {}
 
   async send(message: JsonRpcMessage): Promise<void> {
+    if (this.closed) throw new Error("Scripted app-server transport is closed.");
     this.sent.push(message);
     this.onSend(message, this);
   }
@@ -361,6 +362,74 @@ describe("CodexAppServerAdapter", () => {
     await adapter.dispose();
   });
 
+  it.each([
+    {
+      method: "item/commandExecution/requestApproval",
+      params: { command: "npm publish" },
+      operation: "npm publish",
+      response: { decision: "decline" },
+    },
+    {
+      method: "item/fileChange/requestApproval",
+      params: { grantRoot: "/outside" },
+      operation: "Write files under /outside",
+      response: { decision: "decline" },
+    },
+    {
+      method: "item/permissions/requestApproval",
+      params: { permissions: { network: { enabled: true } } },
+      operation: "Grant network access",
+      response: { permissions: {}, scope: "turn" },
+    },
+  ])("denies $method through the execution-approval seam", async ({ method, params, operation, response }) => {
+    const transport = new ScriptedTransport(undefined, (message, fake) => {
+      if (!("id" in message) || !("method" in message)) return;
+      if (message.method === "initialize") fake.push({ id: message.id, result: {} });
+      if (message.method === "thread/start") {
+        fake.push({ id: message.id, result: { thread: { id: "thread-denial" } } });
+      }
+      if (message.method === "turn/start") {
+        fake.push({ id: message.id, result: { turn: { id: "turn-denial" } } });
+        fake.push({
+          id: "denial-1",
+          method,
+          params: {
+            threadId: "thread-denial",
+            turnId: "turn-denial",
+            itemId: "item-denial",
+            startedAtMs: 1,
+            ...params,
+          },
+        });
+      }
+      if (message.method === "turn/interrupt") {
+        fake.push({ id: message.id, result: {} });
+        fake.push({
+          method: "turn/completed",
+          params: {
+            threadId: "thread-denial",
+            turn: { id: "turn-denial", status: "interrupted" },
+          },
+        });
+      }
+    });
+    const adapter = new CodexAppServerAdapter({ transport });
+    const iterator = adapter.run(request())[Symbol.asyncIterator]();
+    await iterator.next();
+    expect(await iterator.next()).toEqual({
+      done: false,
+      value: {
+        type: "execution-approval-requested",
+        requestId: "denial-1",
+        operation,
+      },
+    });
+
+    await adapter.respondToExecutionApproval("denial-1", "denied");
+    expect(transport.sent.at(-1)).toEqual({ id: "denial-1", result: response });
+    await adapter.dispose();
+  });
+
   it("rejects unsupported blocking server requests instead of leaving Codex hanging", async () => {
     const transport = new ScriptedTransport(undefined, (message, fake) => {
       if (!("id" in message) || !("method" in message)) return;
@@ -441,6 +510,139 @@ describe("CodexAppServerAdapter", () => {
       params: { threadId: "thread-1", turnId: "turn-active" },
     });
     expect(await iterator.next()).toEqual({ done: true, value: undefined });
+  });
+
+  it("invalidates unresolved execution approvals when cancellation completes", async () => {
+    const transport = new ScriptedTransport(undefined, (message, fake) => {
+      if (!("id" in message) || !("method" in message)) return;
+      if (message.method === "initialize") fake.push({ id: message.id, result: {} });
+      if (message.method === "thread/start") {
+        fake.push({ id: message.id, result: { thread: { id: "thread-cancel-approval" } } });
+      }
+      if (message.method === "turn/start") {
+        fake.push({ id: message.id, result: { turn: { id: "turn-cancel-approval" } } });
+        fake.push({
+          id: "approval-cancelled",
+          method: "item/commandExecution/requestApproval",
+          params: {
+            threadId: "thread-cancel-approval",
+            turnId: "turn-cancel-approval",
+            itemId: "command-cancelled",
+            command: "npm publish",
+          },
+        });
+      }
+      if (message.method === "turn/interrupt") {
+        fake.push({ id: message.id, result: {} });
+        fake.push({
+          method: "turn/completed",
+          params: {
+            threadId: "thread-cancel-approval",
+            turn: { id: "turn-cancel-approval", status: "interrupted" },
+          },
+        });
+      }
+    });
+    const adapter = new CodexAppServerAdapter({ transport });
+    const iterator = adapter.run(request())[Symbol.asyncIterator]();
+    await iterator.next();
+    await iterator.next();
+
+    await adapter.cancel();
+    expect(await iterator.next()).toEqual({ done: true, value: undefined });
+    await expect(
+      adapter.respondToExecutionApproval("approval-cancelled", "approved"),
+    ).rejects.toThrow("Unknown or already resolved");
+  });
+
+  it("fails subsequent runs with the original connection-loss error", async () => {
+    const transport = new ScriptedTransport(undefined, (message, fake) => {
+      if (!("id" in message) || !("method" in message)) return;
+      if (message.method === "initialize") fake.push({ id: message.id, result: {} });
+      if (message.method === "thread/start") {
+        fake.push({ id: message.id, result: { thread: { id: "thread-lost" } } });
+      }
+      if (message.method === "turn/start") {
+        fake.push({ id: message.id, result: { turn: { id: "turn-lost" } } });
+      }
+    });
+    const adapter = new CodexAppServerAdapter({ transport });
+    const iterator = adapter.run(request())[Symbol.asyncIterator]();
+    expect(await iterator.next()).toEqual({
+      done: false,
+      value: { type: "thread-started", threadId: "thread-lost" },
+    });
+
+    await transport.close();
+    expect(await iterator.next()).toEqual({
+      done: false,
+      value: { type: "error", message: "Codex app-server connection closed unexpectedly." },
+    });
+    expect(await iterator.next()).toEqual({ done: true, value: undefined });
+
+    await expect(async () => {
+      for await (const _event of adapter.run(request())) {
+        // Consume the run.
+      }
+    }).rejects.toThrow("Codex app-server connection closed unexpectedly.");
+  });
+
+  it("resumes the persisted thread through a fresh adapter after process loss", async () => {
+    const transport = new ScriptedTransport(undefined, (message, fake) => {
+      if (!("id" in message) || !("method" in message)) return;
+      if (message.method === "initialize") fake.push({ id: message.id, result: {} });
+      if (message.method === "thread/resume") {
+        fake.push({ id: message.id, result: { thread: { id: "thread-restarted" } } });
+      }
+      if (message.method === "turn/start") {
+        fake.push({ id: message.id, result: { turn: { id: "turn-restarted" } } });
+        fake.push({
+          method: "item/completed",
+          params: {
+            threadId: "thread-restarted",
+            turnId: "turn-restarted",
+            item: {
+              type: "agentMessage",
+              text: JSON.stringify({
+                type: "summary",
+                summary: "The persisted work remains available.",
+                concepts: ["durable thread"],
+                question: "Which identifier reconnects the Pairing Session?",
+              }),
+            },
+          },
+        });
+        fake.push({
+          method: "turn/completed",
+          params: {
+            threadId: "thread-restarted",
+            turn: { id: "turn-restarted", status: "completed" },
+          },
+        });
+      }
+    });
+    const replacement = new CodexAppServerAdapter({ transport });
+    const events = [];
+    for await (const event of replacement.run(
+      request({
+        phase: "summarize",
+        session: session({ agentThreadId: "thread-restarted" }),
+      }),
+    )) {
+      events.push(event);
+    }
+
+    expect(events).toEqual([
+      {
+        type: "summary",
+        summary: "The persisted work remains available.",
+        concepts: ["durable thread"],
+        question: "Which identifier reconnects the Pairing Session?",
+      },
+    ]);
+    expect(transport.sent).toContainEqual(
+      expect.objectContaining({ method: "thread/resume" }),
+    );
   });
 
   it("maps verification, summary, and understanding turns to their domain events", async () => {

@@ -17,6 +17,9 @@ The default executable is `codex` from `PATH`. The adapter currently requires
 `codex-cli 0.147.0-alpha.6.5`, the version against which its stable protocol subset
 was generated and tested. A caller may explicitly select another pinned version
 with `supportedCliVersion` while validating an updated app-server protocol.
+The compact generated snapshot in `protocol-snapshots/` records the permitted and
+required fields for every client request Converge sends. Its conformance test keeps
+that pinned external contract independent from the adapter implementation.
 
 Persist every emitted `thread-started` ID in the provider-neutral `PairingSession.agentThreadId`
 field before the next phase. Command and file permission requests are emitted as
@@ -33,4 +36,6 @@ turn, and `dispose()` when the owning extension is deactivated.
 - Network access is disabled by the adapter's read-only and workspace-write
   sandbox policies. Codex execution approvals remain separate human decisions.
 - Connection-scoped notifications have no replay cursor. Resume a persisted thread
-  after process failure and reconcile it with Converge's own durable event log.
+  after process failure with a fresh adapter and reconcile it with Converge's own
+  durable event log. A failed adapter deliberately retains the original connection
+  error instead of silently starting another process mid-turn.

@@ -1,19 +1,20 @@
-import type {
-  AgentEvent,
-  AgentPort,
-  AgentRunRequest,
-  ChangeUnitRevision,
-  Evidence,
-  TestEvidence,
-} from "@converge/core";
+import type { AgentEvent, AgentPort, AgentRunRequest } from "@converge/core";
 
+import { AsyncQueue } from "./async-queue.js";
+import {
+  readApprovalRequest,
+  translateNotification,
+  type ApprovalRequest,
+} from "./event-translator.js";
+import { buildPrompt } from "./prompts.js";
+import { AppServerProtocolClient } from "./protocol-client.js";
 import {
   TESTED_CODEX_CLI_VERSION,
   type AppServerTransport,
   type JsonRpcId,
-  type JsonRpcMessage,
 } from "./protocol.js";
 import { ChildProcessStdioTransport } from "./stdio-transport.js";
+import { outputSchemaFor } from "./structured-output.js";
 
 export interface CodexAppServerAdapterOptions {
   transport?: AppServerTransport;
@@ -30,68 +31,38 @@ interface ActiveRun {
   queue: AsyncQueue<AgentEvent>;
 }
 
-interface PendingApproval {
-  protocolId: JsonRpcId;
-  kind: "command" | "file" | "permissions";
-  requestedPermissions?: unknown;
-}
-
-class AsyncQueue<T> implements AsyncIterable<T> {
-  readonly #values: T[] = [];
-  readonly #waiters: Array<() => void> = [];
-  #closed = false;
-
-  push(value: T): void {
-    if (this.#closed) return;
-    this.#values.push(value);
-    this.#waiters.shift()?.();
-  }
-
-  close(): void {
-    this.#closed = true;
-    this.#waiters.splice(0).forEach((resolve) => resolve());
-  }
-
-  async *[Symbol.asyncIterator](): AsyncIterator<T> {
-    while (!this.#closed || this.#values.length > 0) {
-      const value = this.#values.shift();
-      if (value !== undefined) {
-        yield value;
-        continue;
-      }
-      await new Promise<void>((resolve) => this.#waiters.push(resolve));
-    }
-  }
+interface PendingApproval extends ApprovalRequest {
+  requestId: string;
 }
 
 export class CodexAppServerAdapter implements AgentPort {
-  readonly #transport: AppServerTransport;
-  readonly #supportedCliVersion: string;
-  readonly #pending = new Map<
-    JsonRpcId,
-    { resolve: (result: unknown) => void; reject: (error: Error) => void }
-  >();
+  readonly #client: AppServerProtocolClient;
   readonly #approvals = new Map<string, PendingApproval>();
-  #nextRequestId = 1;
-  #connectPromise: Promise<void> | undefined;
-  #readerPromise: Promise<void> | undefined;
   #activeRun: ActiveRun | undefined;
   #disposed = false;
 
   constructor(options: CodexAppServerAdapterOptions = {}) {
-    this.#transport =
+    const transport =
       options.transport ??
       new ChildProcessStdioTransport(
         options.executablePath ? { executablePath: options.executablePath } : {},
       );
-    this.#supportedCliVersion = options.supportedCliVersion ?? TESTED_CODEX_CLI_VERSION;
+    this.#client = new AppServerProtocolClient(
+      transport,
+      {
+        onServerRequest: (message) => this.#handleServerRequest(message),
+        onNotification: (message) => this.#handleNotification(message),
+        onDisconnect: (error) => this.#handleDisconnect(error),
+      },
+      options.supportedCliVersion ?? TESTED_CODEX_CLI_VERSION,
+    );
   }
 
   async *run(request: AgentRunRequest): AsyncIterable<AgentEvent> {
     if (this.#activeRun) {
       throw new Error("Codex adapter already has an active turn; wait for it to finish or cancel it.");
     }
-    await this.#connect();
+    await this.#client.connect();
 
     const threadId = request.session.agentThreadId
       ? await this.#resumeThread(request)
@@ -105,12 +76,10 @@ export class CodexAppServerAdapter implements AgentPort {
     };
     this.#activeRun = active;
 
-    if (!request.session.agentThreadId) {
-      queue.push({ type: "thread-started", threadId });
-    }
+    if (!request.session.agentThreadId) queue.push({ type: "thread-started", threadId });
 
     try {
-      const turnResult = await this.#request("turn/start", {
+      const turnResult = await this.#client.request("turn/start", {
         threadId,
         input: [{ type: "text", text: buildPrompt(request), text_elements: [] }],
         cwd: request.session.workspaceRoot,
@@ -144,16 +113,15 @@ export class CodexAppServerAdapter implements AgentPort {
       // The process may already be unavailable; closing it is still required.
     }
     this.#disposed = true;
+    this.#approvals.clear();
     this.#activeRun?.queue.close();
-    this.#rejectPending(new Error("Codex adapter was disposed."));
-    await this.#transport.close();
-    await this.#readerPromise;
+    await this.#client.close();
   }
 
   async cancel(): Promise<void> {
     const active = this.#activeRun;
     if (!active?.turnId) return;
-    await this.#request("turn/interrupt", {
+    await this.#client.request("turn/interrupt", {
       threadId: active.threadId,
       turnId: active.turnId,
     });
@@ -164,9 +132,11 @@ export class CodexAppServerAdapter implements AgentPort {
     decision: "approved" | "denied",
   ): Promise<void> {
     const approval = this.#approvals.get(requestId);
-    if (!approval) throw new Error(`Unknown or already resolved Codex execution approval ${requestId}.`);
+    if (!approval) {
+      throw new Error(`Unknown or already resolved Codex execution approval ${requestId}.`);
+    }
     this.#approvals.delete(requestId);
-    await this.#transport.send(
+    await this.#client.send(
       approval.kind === "permissions"
         ? {
             id: approval.protocolId,
@@ -182,31 +152,8 @@ export class CodexAppServerAdapter implements AgentPort {
     );
   }
 
-  async #connect(): Promise<void> {
-    if (this.#disposed) throw new Error("Codex adapter has been disposed.");
-    this.#connectPromise ??= this.#initialize();
-    await this.#connectPromise;
-  }
-
-  async #initialize(): Promise<void> {
-    const reportedVersion = await this.#transport.readCliVersion();
-    const actual = parseCliVersion(reportedVersion);
-    if (actual !== this.#supportedCliVersion) {
-      throw new Error(
-        `Unsupported Codex CLI version ${actual ?? JSON.stringify(reportedVersion)}; Converge supports ${this.#supportedCliVersion}. Configure a compatible codex executable.`,
-      );
-    }
-    await this.#transport.start();
-    this.#readerPromise = this.#readMessages();
-    await this.#request("initialize", {
-      clientInfo: { name: "converge", title: "Converge", version: "0.1.0" },
-      capabilities: null,
-    });
-    await this.#transport.send({ method: "initialized" });
-  }
-
   async #startThread(request: AgentRunRequest): Promise<string> {
-    const result = await this.#request("thread/start", {
+    const result = await this.#client.request("thread/start", {
       cwd: request.session.workspaceRoot,
       approvalPolicy: "on-request",
       approvalsReviewer: "user",
@@ -219,7 +166,7 @@ export class CodexAppServerAdapter implements AgentPort {
   async #resumeThread(request: AgentRunRequest): Promise<string> {
     const requestedId = request.session.agentThreadId;
     if (!requestedId) throw new Error("Cannot resume a Codex thread without an id.");
-    const result = await this.#request("thread/resume", {
+    const result = await this.#client.request("thread/resume", {
       threadId: requestedId,
       cwd: request.session.workspaceRoot,
       approvalPolicy: "on-request",
@@ -229,539 +176,50 @@ export class CodexAppServerAdapter implements AgentPort {
     return readThreadId(result, "thread/resume");
   }
 
-  async #request(method: string, params: unknown): Promise<unknown> {
-    const id = this.#nextRequestId++;
-    const response = new Promise<unknown>((resolve, reject) => {
-      this.#pending.set(id, { resolve, reject });
-    });
-    try {
-      await this.#transport.send({ id, method, params });
-    } catch (error) {
-      this.#pending.delete(id);
-      throw error;
-    }
-    return response;
-  }
-
-  async #readMessages(): Promise<void> {
-    try {
-      for await (const message of this.#transport.messages()) {
-        if ("id" in message && "method" in message) {
-          this.#handleServerRequest(message);
-          continue;
-        }
-        if ("id" in message && !("method" in message)) {
-          const pending = this.#pending.get(message.id);
-          if (!pending) continue;
-          this.#pending.delete(message.id);
-          if ("error" in message) {
-            pending.reject(protocolError(message.error, message.id));
-          } else {
-            pending.resolve(message.result);
-          }
-          continue;
-        }
-        if ("method" in message && !("id" in message)) this.#handleNotification(message);
-      }
-      if (!this.#disposed) throw new Error("Codex app-server connection closed unexpectedly.");
-    } catch (error) {
-      const failure = asError(error, "Codex app-server transport failed");
-      this.#rejectPending(failure);
-      this.#activeRun?.queue.push({ type: "error", message: failure.message });
-      this.#activeRun?.queue.close();
-    }
-  }
-
-  #handleServerRequest(message: { id: JsonRpcId; method: string; params?: unknown }): void {
+  async #handleServerRequest(message: {
+    id: JsonRpcId;
+    method: string;
+    params?: unknown;
+  }): Promise<void> {
     const active = this.#activeRun;
-    const params = asRecord(message.params);
-    if (!active || params?.threadId !== active.threadId) {
-      void this.#rejectServerRequest(message.id, message.method);
-      return;
-    }
-    const kind: PendingApproval["kind"] | undefined =
-      message.method === "item/commandExecution/requestApproval"
-        ? "command"
-        : message.method === "item/fileChange/requestApproval"
-          ? "file"
-          : message.method === "item/permissions/requestApproval"
-            ? "permissions"
-          : undefined;
-    if (!kind) {
-      void this.#rejectServerRequest(message.id, message.method);
+    const approval = active ? readApprovalRequest(message, active.threadId) : undefined;
+    if (!active || !approval) {
+      await this.#client.send({
+        id: message.id,
+        error: {
+          code: -32601,
+          message: `Converge does not support app-server request ${message.method} in this phase.`,
+        },
+      });
       return;
     }
     const requestId = String(message.id);
-    this.#approvals.set(requestId, {
-      protocolId: message.id,
-      kind,
-      ...(kind === "permissions" ? { requestedPermissions: params.permissions } : {}),
-    });
-    const operation =
-      kind === "command"
-        ? typeof params.command === "string"
-          ? params.command
-          : "Run a command"
-        : kind === "file" && typeof params.grantRoot === "string"
-          ? `Write files under ${params.grantRoot}`
-          : kind === "file"
-            ? "Modify workspace files"
-            : describePermissions(params.permissions);
+    this.#approvals.set(requestId, { ...approval, requestId });
     active.queue.push({
       type: "execution-approval-requested",
       requestId,
-      operation,
-      ...(typeof params.reason === "string" ? { reason: params.reason } : {}),
-    });
-  }
-
-  async #rejectServerRequest(id: JsonRpcId, method: string): Promise<void> {
-    await this.#transport.send({
-      id,
-      error: {
-        code: -32601,
-        message: `Converge does not support app-server request ${method} in this phase.`,
-      },
+      operation: approval.operation,
+      ...(approval.reason === undefined ? {} : { reason: approval.reason }),
     });
   }
 
   #handleNotification(message: { method: string; params?: unknown }): void {
     const active = this.#activeRun;
     if (!active) return;
-    const params = asRecord(message.params);
-    if (params?.threadId !== active.threadId) return;
-
-    if (message.method === "item/agentMessage/delta") {
-      const delta = typeof params.delta === "string" ? params.delta.trim() : "";
-      if (delta) active.queue.push({ type: "progress", message: delta });
-      return;
-    }
-    if (message.method === "item/completed") {
-      const item = asRecord(params.item);
-      if (item?.type === "agentMessage" && typeof item.text === "string") {
-        active.finalMessage = item.text;
-      }
-      if (item?.type === "commandExecution" && typeof item.command === "string") {
-        const exit = typeof item.exitCode === "number" ? ` (exit ${String(item.exitCode)})` : "";
-        active.queue.push({ type: "progress", message: `Command completed${exit}: ${item.command}` });
-      }
-      if (item?.type === "fileChange") {
-        const count = Array.isArray(item.changes) ? item.changes.length : 0;
-        active.queue.push({
-          type: "progress",
-          message: `Workspace file change completed (${String(count)} ${count === 1 ? "file" : "files"}).`,
-        });
-      }
-      return;
-    }
-    if (message.method === "item/started") {
-      const item = asRecord(params.item);
-      if (item?.type === "commandExecution" && typeof item.command === "string") {
-        active.queue.push({ type: "progress", message: `Running command: ${item.command}` });
-      } else if (item?.type === "fileChange") {
-        active.queue.push({ type: "progress", message: "Applying workspace file changes." });
-      }
-      return;
-    }
-    if (message.method === "turn/diff/updated") {
-      active.queue.push({ type: "progress", message: "Workspace diff updated." });
-      return;
-    }
-    if (message.method === "error") {
-      const error = asRecord(params.error);
-      const messageText =
-        (typeof params.message === "string" && params.message) ||
-        (typeof error?.message === "string" && error.message) ||
-        "Codex reported an unknown protocol error.";
-      active.queue.push({ type: "error", message: messageText });
-      return;
-    }
-    if (message.method === "turn/completed") {
-      const turn = asRecord(params.turn);
-      if (turn?.status === "interrupted") {
-        active.queue.close();
-        return;
-      }
-      if (turn?.status === "failed") {
-        const error = asRecord(turn.error);
-        active.queue.push({
-          type: "error",
-          message:
-            typeof error?.message === "string"
-              ? `Codex turn failed: ${error.message}`
-              : "Codex turn failed without an error message.",
-        });
-        active.queue.close();
-        return;
-      }
-      try {
-        const event = parseAgentEvent(active.finalMessage);
-        active.queue.push(
-          event.type === "proposal" &&
-            event.changeId === undefined &&
-            active.phase === "revise" &&
-            active.changeId !== undefined
-            ? { ...event, changeId: active.changeId }
-            : event,
-        );
-      } catch (error) {
-        active.queue.push({ type: "error", message: asError(error, "Invalid Codex response").message });
-      } finally {
-        active.queue.close();
-      }
+    const effect = translateNotification(message, active);
+    if (effect.finalMessage !== undefined) active.finalMessage = effect.finalMessage;
+    effect.events.forEach((event) => active.queue.push(event));
+    if (effect.completed) {
+      this.#approvals.clear();
+      active.queue.close();
     }
   }
 
-  #rejectPending(error: Error): void {
-    for (const pending of this.#pending.values()) pending.reject(error);
-    this.#pending.clear();
+  #handleDisconnect(error: Error): void {
+    this.#approvals.clear();
+    this.#activeRun?.queue.push({ type: "error", message: error.message });
+    this.#activeRun?.queue.close();
   }
-}
-
-function describePermissions(value: unknown): string {
-  const permissions = asRecord(value);
-  const requested: string[] = [];
-  const network = asRecord(permissions?.network);
-  if (network?.enabled === true) requested.push("network access");
-  const fileSystem = asRecord(permissions?.fileSystem);
-  const read = Array.isArray(fileSystem?.read) ? fileSystem.read.filter((path) => typeof path === "string") : [];
-  const write = Array.isArray(fileSystem?.write) ? fileSystem.write.filter((path) => typeof path === "string") : [];
-  if (read.length > 0) requested.push(`read access to ${read.join(", ")}`);
-  if (write.length > 0) requested.push(`write access to ${write.join(", ")}`);
-  return requested.length > 0 ? `Grant ${requested.join(" and ")}` : "Grant additional execution permissions";
-}
-
-function buildPrompt(request: AgentRunRequest): string {
-  const context = {
-    phase: request.phase,
-    specification: request.session.specification,
-    changeId: request.changeId,
-    currentChange: request.changeId
-      ? request.session.changes.find((change) => change.id === request.changeId)
-      : undefined,
-    humanMessage: request.humanMessage,
-    resolvedChanges: request.session.changes
-      .filter((change) => change.status === "verified" || change.status === "rejected")
-      .map((change) => ({
-        id: change.id,
-        status: change.status,
-        revision: change.revisions.find(
-          (revision) => revision.revision === change.currentRevision,
-        ),
-      })),
-  };
-  return [
-    `Complete exactly one bounded Converge ${request.phase} phase.`,
-    phaseInstruction(request.phase),
-    "Return only JSON matching the supplied output schema. Do not wrap it in Markdown.",
-    JSON.stringify(context),
-  ].join("\n\n");
-}
-
-function phaseInstruction(phase: AgentRunRequest["phase"]): string {
-  switch (phase) {
-    case "investigate":
-      return "Propose the next meaningful Change Unit. If all specification work is implemented and verified, return the final summary and Understanding Check instead.";
-    case "discuss":
-      return "Answer the engineer's question concisely without changing the proposal. A redesign requires Redirect, not Discuss.";
-    case "revise":
-      return "Return a revised proposal that preserves the supplied Change Unit identity and addresses the engineer's redirect.";
-    case "implement":
-      return "Apply only the approved Change Unit and report concrete file, command, and test evidence.";
-    case "verify":
-      return "Run the verification appropriate to this Change Unit and report passed, failed, or expected-failure evidence accurately.";
-    case "summarize":
-      return "Summarize the verified resulting system and ask one targeted Understanding Check question.";
-    case "assess-understanding":
-      return "Compare the engineer's answer with the implemented system and report aligned or mismatch with a concise explanation.";
-  }
-}
-
-function outputSchemaFor(phase: AgentRunRequest["phase"]): Record<string, unknown> {
-  const common = { type: "object", additionalProperties: false };
-  if (phase === "investigate") {
-    return {
-      ...common,
-      required: ["type", "proposal", "summary", "concepts", "question"],
-      properties: {
-        type: { enum: ["proposal", "summary"] },
-        proposal: { anyOf: [revisionSchema(), { type: "null" }] },
-        summary: { type: ["string", "null"] },
-        concepts: { type: "array", items: { type: "string" } },
-        question: { type: ["string", "null"] },
-      },
-    };
-  }
-  if (phase === "revise") {
-    return proposalOutputSchema();
-  }
-  if (phase === "discuss") {
-    return {
-      ...common,
-      required: ["type", "changeId", "message"],
-      properties: {
-        type: { const: "discussion" },
-        changeId: { type: "string" },
-        message: { type: "string" },
-      },
-    };
-  }
-  if (phase === "implement") {
-    return {
-      ...common,
-      required: ["type", "changeId", "evidence", "tests"],
-      properties: {
-        type: { const: "implementation" },
-        changeId: { type: "string" },
-        evidence: evidenceSchema(),
-        tests: testEvidenceSchema(),
-      },
-    };
-  }
-  if (phase === "verify") {
-    return {
-      ...common,
-      required: ["type", "changeId", "tests", "evidence"],
-      properties: {
-        type: { const: "verification" },
-        changeId: { type: "string" },
-        tests: testEvidenceSchema(),
-        evidence: evidenceSchema(),
-      },
-    };
-  }
-  if (phase === "summarize") {
-    return summaryOutputSchema();
-  }
-  return {
-    ...common,
-    required: ["type", "assessment", "explanation"],
-    properties: {
-      type: { const: "understanding-assessment" },
-      assessment: { enum: ["aligned", "mismatch"] },
-      explanation: { type: "string" },
-    },
-  };
-}
-
-function proposalOutputSchema(): Record<string, unknown> {
-  return {
-    type: "object",
-    additionalProperties: false,
-    required: ["type", "proposal"],
-    properties: {
-      type: { const: "proposal" },
-      changeId: { type: "string" },
-      proposal: revisionSchema(),
-    },
-  };
-}
-
-function summaryOutputSchema(): Record<string, unknown> {
-  return {
-    type: "object",
-    additionalProperties: false,
-    required: ["type", "summary", "concepts", "question"],
-    properties: {
-      type: { const: "summary" },
-      summary: { type: "string" },
-      concepts: { type: "array", items: { type: "string" } },
-      question: { type: "string" },
-    },
-  };
-}
-
-function revisionSchema(): Record<string, unknown> {
-  return {
-    type: "object",
-    additionalProperties: false,
-    required: [
-      "title",
-      "intent",
-      "rationale",
-      "affectedFiles",
-      "behaviouralImpact",
-      "architecturalImpact",
-      "risks",
-      "evidence",
-      "visualisations",
-      "tests",
-    ],
-    properties: {
-      title: { type: "string" },
-      intent: { type: "string" },
-      rationale: { type: "string" },
-      affectedFiles: {
-        type: "array",
-        items: {
-          type: "object",
-          additionalProperties: false,
-          required: ["path", "description"],
-          properties: {
-            path: { type: "string" },
-            description: { type: ["string", "null"] },
-          },
-        },
-      },
-      behaviouralImpact: { type: ["string", "null"] },
-      architecturalImpact: { type: ["string", "null"] },
-      risks: { type: "array", items: { type: "string" } },
-      evidence: evidenceSchema(),
-      visualisations: {
-        type: "array",
-        items: {
-          type: "object",
-          additionalProperties: false,
-          required: ["kind", "title", "source"],
-          properties: {
-            kind: { const: "mermaid" },
-            title: { type: "string" },
-            source: { type: "string" },
-          },
-        },
-      },
-      tests: testEvidenceSchema(),
-    },
-  };
-}
-
-function evidenceSchema(): Record<string, unknown> {
-  return {
-    type: "array",
-    items: {
-      type: "object",
-      additionalProperties: false,
-      required: ["kind", "summary", "detail"],
-      properties: {
-        kind: { enum: ["investigation", "diff", "command", "test", "verification"] },
-        summary: { type: "string" },
-        detail: { type: ["string", "null"] },
-      },
-    },
-  };
-}
-
-function testEvidenceSchema(): Record<string, unknown> {
-  return {
-    type: "array",
-    items: {
-      type: "object",
-      additionalProperties: false,
-      required: ["command", "outcome", "summary"],
-      properties: {
-        command: { type: "string" },
-        outcome: { enum: ["passed", "failed", "expected-failure"] },
-        summary: { type: "string" },
-      },
-    },
-  };
-}
-
-function parseAgentEvent(raw: string | undefined): AgentEvent {
-  if (!raw) throw new Error("Codex completed the turn without a final structured message.");
-  let value: unknown;
-  try {
-    value = JSON.parse(raw);
-  } catch {
-    throw new Error("Codex final message was not valid JSON.");
-  }
-  const record = asRecord(value);
-  if (!record) throw new Error("Codex final message must be a JSON object.");
-  switch (record.type) {
-    case "proposal":
-      return {
-        type: "proposal",
-        ...(typeof record.changeId === "string" ? { changeId: record.changeId } : {}),
-        proposal: parseProposal(record.proposal),
-      };
-    case "discussion":
-      return {
-        type: "discussion",
-        changeId: requiredString(record, "changeId"),
-        message: requiredString(record, "message"),
-      };
-    case "implementation":
-      return {
-        type: "implementation",
-        changeId: requiredString(record, "changeId"),
-        evidence: parseEvidence(record.evidence),
-        ...(Array.isArray(record.tests) ? { tests: parseTests(record.tests) } : {}),
-      };
-    case "verification":
-      return {
-        type: "verification",
-        changeId: requiredString(record, "changeId"),
-        tests: parseTests(record.tests),
-        ...(Array.isArray(record.evidence) ? { evidence: parseEvidence(record.evidence) } : {}),
-      };
-    case "summary":
-      return {
-        type: "summary",
-        summary: requiredString(record, "summary"),
-        concepts: requiredStringArray(record, "concepts"),
-        question: requiredString(record, "question"),
-      };
-    case "understanding-assessment": {
-      const assessment = record.assessment;
-      if (assessment !== "aligned" && assessment !== "mismatch") {
-        throw new Error("Codex understanding assessment must be aligned or mismatch.");
-      }
-      return {
-        type: "understanding-assessment",
-        assessment,
-        explanation: requiredString(record, "explanation"),
-      };
-    }
-    default:
-      throw new Error(`Codex returned unsupported event type ${JSON.stringify(record.type)}.`);
-  }
-}
-
-function parseProposal(value: unknown): Omit<ChangeUnitRevision, "revision" | "proposedAt"> {
-  const proposal = asRecord(value);
-  if (!proposal) throw new Error("Codex proposal must be an object.");
-  const title = requiredString(proposal, "title");
-  const intent = requiredString(proposal, "intent");
-  const rationale = requiredString(proposal, "rationale");
-  const affectedFiles = requiredArray(proposal, "affectedFiles").map((value) => {
-    const file = asRecord(value);
-    if (!file) throw new Error("Codex affected file must be an object.");
-    return {
-      path: requiredString(file, "path"),
-      ...(typeof file.description === "string" ? { description: file.description } : {}),
-    };
-  });
-  const risks = requiredArray(proposal, "risks");
-  if (!risks.every((risk) => typeof risk === "string")) {
-    throw new Error("Codex proposal risks must contain only strings.");
-  }
-  const visualisations = requiredArray(proposal, "visualisations").map((value) => {
-    const visualisation = asRecord(value);
-    if (!visualisation || visualisation.kind !== "mermaid") {
-      throw new Error("Codex visualisation must be a Mermaid object.");
-    }
-    return {
-      kind: "mermaid" as const,
-      title: requiredString(visualisation, "title"),
-      source: requiredString(visualisation, "source"),
-    };
-  });
-  return {
-    title,
-    intent,
-    rationale,
-    affectedFiles,
-    ...(typeof proposal.behaviouralImpact === "string"
-      ? { behaviouralImpact: proposal.behaviouralImpact }
-      : {}),
-    ...(typeof proposal.architecturalImpact === "string"
-      ? { architecturalImpact: proposal.architecturalImpact }
-      : {}),
-    risks: risks as string[],
-    evidence: parseEvidence(proposal.evidence),
-    visualisations,
-    tests: parseTests(proposal.tests),
-  };
 }
 
 function readThreadId(value: unknown, method: string): string {
@@ -776,82 +234,8 @@ function readTurnId(value: unknown): string {
   return turn.id;
 }
 
-function parseCliVersion(output: string): string | undefined {
-  return /(?:codex-cli\s+)?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/.exec(output)?.[1];
-}
-
-function protocolError(error: { code?: number; message: string; data?: unknown }, id: JsonRpcId): Error {
-  const code = error.code === undefined ? "unknown" : String(error.code);
-  const detail = error.data === undefined ? "" : ` (${JSON.stringify(error.data)})`;
-  return new Error(`Codex app-server request ${String(id)} failed [${code}]: ${error.message}${detail}`);
-}
-
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
-}
-
-function requiredString(record: Record<string, unknown>, field: string): string {
-  const value = record[field];
-  if (typeof value !== "string") throw new Error(`Codex response is missing ${field}.`);
-  return value;
-}
-
-function requiredArray(record: Record<string, unknown>, field: string): unknown[] {
-  const value = record[field];
-  if (!Array.isArray(value)) throw new Error(`Codex response is missing ${field}.`);
-  return value;
-}
-
-function requiredStringArray(record: Record<string, unknown>, field: string): string[] {
-  const value = requiredArray(record, field);
-  if (!value.every((item) => typeof item === "string")) {
-    throw new Error(`Codex response ${field} must contain only strings.`);
-  }
-  return value;
-}
-
-function parseEvidence(value: unknown): Evidence[] {
-  if (!Array.isArray(value)) throw new Error("Codex response is missing evidence.");
-  return value.map((entry) => {
-    const record = asRecord(entry);
-    if (!record) throw new Error("Codex evidence entry must be an object.");
-    const kind = record.kind;
-    if (
-      kind !== "investigation" &&
-      kind !== "diff" &&
-      kind !== "command" &&
-      kind !== "test" &&
-      kind !== "verification"
-    ) {
-      throw new Error(`Codex evidence has invalid kind ${JSON.stringify(kind)}.`);
-    }
-    return {
-      kind,
-      summary: requiredString(record, "summary"),
-      ...(typeof record.detail === "string" ? { detail: record.detail } : {}),
-    };
-  });
-}
-
-function parseTests(value: unknown): TestEvidence[] {
-  if (!Array.isArray(value)) throw new Error("Codex response is missing tests.");
-  return value.map((entry) => {
-    const record = asRecord(entry);
-    if (!record) throw new Error("Codex test evidence entry must be an object.");
-    const outcome = record.outcome;
-    if (outcome !== "passed" && outcome !== "failed" && outcome !== "expected-failure") {
-      throw new Error(`Codex test evidence has invalid outcome ${JSON.stringify(outcome)}.`);
-    }
-    return {
-      command: requiredString(record, "command"),
-      outcome,
-      summary: requiredString(record, "summary"),
-    };
-  });
-}
-
-function asError(value: unknown, prefix: string): Error {
-  return value instanceof Error ? value : new Error(`${prefix}: ${String(value)}`);
 }
