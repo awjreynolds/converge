@@ -16,9 +16,11 @@ class ScriptedTransport implements AppServerTransport {
   constructor(
     readonly cliVersion = "codex-cli 0.147.0-alpha.6.5",
     private readonly onSend: (message: JsonRpcMessage, transport: ScriptedTransport) => void,
+    private readonly beforeVersion?: Promise<void>,
   ) {}
 
   async readCliVersion(): Promise<string> {
+    await this.beforeVersion;
     return this.cliVersion;
   }
 
@@ -111,6 +113,24 @@ async function runCompletedTurn(
 }
 
 describe("CodexAppServerAdapter", () => {
+  it("validates the configured executable and protocol before any session starts", async () => {
+    const transport = new ScriptedTransport(undefined, (message, fake) => {
+      if ("id" in message && "method" in message && message.method === "initialize") {
+        fake.push({ id: message.id, result: { userAgent: "codex" } });
+      }
+    });
+    const adapter = new CodexAppServerAdapter({ transport });
+
+    await adapter.validate();
+
+    expect(transport.sent).toEqual([
+      expect.objectContaining({ method: "initialize" }),
+      { method: "initialized" },
+    ]);
+    expect(transport.sent.some((message) => "method" in message && message.method === "thread/start")).toBe(false);
+    await adapter.dispose();
+  });
+
   it("starts a Converge-owned thread and returns a structured proposal", async () => {
     const transport = new ScriptedTransport(undefined, (message, fake) => {
       if (!("id" in message) || !("method" in message)) return;
@@ -601,6 +621,33 @@ describe("CodexAppServerAdapter", () => {
     expect(events).toEqual([
       { type: "conversation-started", conversationId: "thread-early-cancel" },
     ]);
+  });
+
+  it("latches cancellation while connection validation is still starting", async () => {
+    let releaseVersion!: () => void;
+    const versionBlocked = new Promise<void>((resolve) => {
+      releaseVersion = resolve;
+    });
+    const transport = new ScriptedTransport(undefined, (message, fake) => {
+      if ("id" in message && "method" in message && message.method === "initialize") {
+        fake.push({ id: message.id, result: {} });
+      }
+    }, versionBlocked);
+    const adapter = new CodexAppServerAdapter({ transport });
+    const run = (async () => {
+      for await (const _event of adapter.run(request())) {
+        // Consume the run.
+      }
+    })();
+
+    await Promise.resolve();
+    await adapter.cancel();
+    releaseVersion();
+
+    await expect(run).rejects.toBeInstanceOf(AgentRunCancelledError);
+    expect(transport.sent.some((message) => "method" in message && message.method === "thread/start")).toBe(false);
+    expect(transport.sent.some((message) => "method" in message && message.method === "turn/start")).toBe(false);
+    await adapter.dispose();
   });
 
   it("fails subsequent runs with the original connection-loss error", async () => {

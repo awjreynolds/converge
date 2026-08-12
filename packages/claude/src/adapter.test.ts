@@ -52,6 +52,43 @@ const request = (overrides: Partial<AgentRunRequest> = {}): AgentRunRequest => (
 });
 
 describe("ClaudeAgentAdapter", () => {
+  it("validates provider-owned authentication and the configured local Claude version", async () => {
+    const adapter = new ClaudeAgentAdapter({
+      executablePath: process.execPath,
+      supportedCliVersion: process.versions.node,
+      providerEnvironment: { ...process.env, ANTHROPIC_API_KEY: "provider-owned-test-key" },
+    });
+
+    await expect(adapter.validate()).resolves.toBeUndefined();
+    await adapter.dispose();
+  });
+
+  it("fails validation before execution when provider-owned authentication is absent", async () => {
+    const adapter = new ClaudeAgentAdapter({
+      executablePath: process.execPath,
+      supportedCliVersion: process.versions.node,
+      providerEnvironment: {},
+    });
+
+    await expect(adapter.validate()).rejects.toThrow(
+      "Claude authentication is not configured",
+    );
+    await adapter.dispose();
+  });
+
+  it("fails validation clearly when the local Claude version is unsupported", async () => {
+    const adapter = new ClaudeAgentAdapter({
+      executablePath: process.execPath,
+      supportedCliVersion: "2.1.228",
+      providerEnvironment: { ...process.env, CLAUDE_CODE_USE_BEDROCK: "1" },
+    });
+
+    await expect(adapter.validate()).rejects.toThrow(
+      `Unsupported Claude Code version ${process.versions.node}; Converge supports 2.1.228`,
+    );
+    await adapter.dispose();
+  });
+
   it("constructs the production adapter without collecting provider credentials", async () => {
     const adapter = new ClaudeAgentAdapter();
 

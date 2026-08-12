@@ -43,6 +43,8 @@ export class ScriptedClaudeTransport implements ClaudeTransport {
 
   constructor(readonly scenario: AgentPortConformanceScenario) {}
 
+  async validate(): Promise<void> {}
+
   async *run(request: ClaudeTransportRunRequest): AsyncIterable<ClaudeTransportEvent> {
     if (this.#disposed) throw new Error("Claude transport is disposed.");
     this.#checkpoints.reach("run-started");
@@ -59,17 +61,18 @@ export class ScriptedClaudeTransport implements ClaudeTransport {
       yield { type: "error", message: "Claude Agent SDK disconnected unexpectedly." };
       return;
     }
+    if (this.scenario === "unsupported-request") {
+      this.#observations.unsupportedRequestDenials.push("unsupported-1");
+    }
     if (this.scenario === "structured-result") {
       yield { type: "conversation-started", conversationId: "conformance-conversation" };
       yield { type: "progress", message: "Inspecting the authorization boundary." };
-    }
-    if (this.scenario === "unsupported-request") {
-      this.#observations.unsupportedRequestDenials.push("unsupported-1");
     }
     if (this.scenario === "approval" || this.scenario === "dispose-during-run") {
       const decision = new Promise<"approved" | "denied">((resolve) => {
         this.#approvalDecision = resolve;
       });
+      this.#cancelRun = () => this.#approvalDecision?.("denied");
       yield {
         type: "execution-approval-requested",
         requestId: "approval-1",
@@ -78,7 +81,7 @@ export class ScriptedClaudeTransport implements ClaudeTransport {
       };
       this.#checkpoints.reach("approval-pending");
       await decision;
-      if (this.#cancelled) {
+      if (this.#disposed) {
         yield { type: "cancelled" };
         return;
       }
@@ -119,7 +122,8 @@ export class ScriptedClaudeTransport implements ClaudeTransport {
     if (this.#disposed) return;
     this.#disposed = true;
     this.#observations.disposalCount += 1;
-    await this.cancel();
+    this.#cancelRun?.();
+    this.#approvalDecision = undefined;
   }
 
   waitFor(checkpoint: AgentPortConformanceCheckpoint): Promise<void> {

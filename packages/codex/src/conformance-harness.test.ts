@@ -103,14 +103,6 @@ class CodexConformanceTransport implements AppServerTransport {
           }, 0);
           return;
         }
-        if (this.scenario === "unsupported-request") {
-          this.push({
-            id: "unsupported-1",
-            method: "provider/unsupported/request",
-            params: { threadId: this.#threadId },
-          });
-          return;
-        }
         if (this.scenario === "approval" || this.scenario === "dispose-during-run") {
           this.push({
             id: "approval-1",
@@ -124,6 +116,14 @@ class CodexConformanceTransport implements AppServerTransport {
             },
           });
           this.checkpoints.reach("approval-pending");
+          return;
+        }
+        if (this.scenario === "unsupported-request") {
+          this.push({
+            id: "unsupported-1",
+            method: "item/tool/requestUserInput",
+            params: { threadId: this.#threadId, turnId: "turn-1" },
+          });
           return;
         }
         this.completeTurn();

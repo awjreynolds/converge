@@ -2,6 +2,7 @@ export { ClaudeAgentAdapter, type ClaudeAgentAdapterOptions } from "./adapter.js
 export {
   CLAUDE_PROVIDER_ID,
   TESTED_CLAUDE_AGENT_SDK_VERSION,
+  TESTED_CLAUDE_CLI_VERSION,
   type ClaudeTransport,
   type ClaudeTransportEvent,
   type ClaudeTransportRunRequest,

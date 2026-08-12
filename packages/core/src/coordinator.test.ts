@@ -359,6 +359,8 @@ class RecordingAgent implements AgentPort {
 
   constructor(private readonly events: AgentEvent[]) {}
 
+  async validate(): Promise<void> {}
+
   async *run(_request: AgentRunRequest): AsyncIterable<AgentEvent> {
     this.runs += 1;
     yield* this.events;
@@ -379,6 +381,8 @@ class RecordingAgent implements AgentPort {
 class ScriptedAgent implements AgentPort {
   constructor(private readonly scripts: AgentEvent[][]) {}
 
+  async validate(): Promise<void> {}
+
   async *run(_request: AgentRunRequest): AsyncIterable<AgentEvent> {
     const events = this.scripts.shift();
     if (!events) throw new Error("No agent script available");
@@ -394,6 +398,8 @@ class ScriptedAgent implements AgentPort {
 
 class FailingAgent implements AgentPort {
   constructor(private readonly failure: Error) {}
+
+  async validate(): Promise<void> {}
 
   async *run(_request: AgentRunRequest): AsyncIterable<AgentEvent> {
     throw this.failure;

@@ -64,6 +64,7 @@ describe("ClaudeSdkTransport", () => {
         permissionMode: "default",
         settingSources: [],
         tools: ["Read", "Glob", "Grep"],
+        pathToClaudeCodeExecutable: "claude",
         outputFormat: { type: "json_schema", schema: { type: "object" } },
       },
     });
@@ -123,6 +124,46 @@ describe("ClaudeSdkTransport", () => {
       toolUseID: "tool-1",
       decisionClassification: "user_reject",
     });
+  });
+
+  it("denies an unknown tool without presenting an execution approval", async () => {
+    let permissionResult: unknown;
+    const transport = new ClaudeSdkTransport({
+      query: ({ options }) =>
+        (async function* (): ClaudeSdkQuery {
+          permissionResult = await options.canUseTool(
+            "FutureNetworkTool",
+            { destination: "https://example.invalid" },
+            {
+              signal: options.abortController.signal,
+              toolUseID: "tool-unknown",
+              requestId: "approval-unknown",
+            },
+          );
+          yield {
+            type: "result",
+            subtype: "success",
+            session_id: "claude-session-1",
+            structured_output: { type: "summary", summary: "Done", concepts: [], question: "Why?" },
+          };
+        })(),
+    });
+    const events = [];
+
+    for await (const event of transport.run({
+      prompt: "Implement",
+      cwd: "/workspace/converge-fixture",
+      approvalPolicy: "workspace-write",
+      outputSchema: { type: "object" },
+    })) events.push(event);
+
+    expect(permissionResult).toEqual({
+      behavior: "deny",
+      message: "Converge does not support Claude tool FutureNetworkTool.",
+      toolUseID: "tool-unknown",
+      decisionClassification: "user_reject",
+    });
+    expect(events).toEqual([expect.objectContaining({ type: "structured-result" })]);
   });
 
   it("cancels while the SDK is still starting the turn", async () => {
@@ -203,7 +244,7 @@ describe("ClaudeSdkTransport", () => {
     const transport = new ClaudeSdkTransport({
       query: () =>
         (async function* (): ClaudeSdkQuery {
-          throw new Error("socket included a sensitive provider payload");
+          throw new Error("socket closed with code 1006");
         })(),
     });
     const events = [];
@@ -218,7 +259,36 @@ describe("ClaudeSdkTransport", () => {
     }
 
     expect(events).toEqual([
-      { type: "error", message: "Claude Agent SDK disconnected unexpectedly." },
+      {
+        type: "error",
+        message: "Claude Agent SDK disconnected unexpectedly: socket closed with code 1006",
+      },
     ]);
+  });
+
+  it("redacts credentials while retaining the Claude disconnect cause", async () => {
+    const transport = new ClaudeSdkTransport({
+      query: () =>
+        (async function* (): ClaudeSdkQuery {
+          throw new Error("authentication failed for ANTHROPIC_API_KEY=secret-value");
+        })(),
+    });
+    const events = [];
+
+    for await (const event of transport.run({
+      prompt: "Investigate",
+      cwd: "/workspace/converge-fixture",
+      approvalPolicy: "read-only",
+      outputSchema: { type: "object" },
+    })) events.push(event);
+
+    expect(events).toEqual([
+      {
+        type: "error",
+        message:
+          "Claude Agent SDK disconnected unexpectedly: authentication failed for ANTHROPIC_API_KEY=[REDACTED]",
+      },
+    ]);
+    expect(JSON.stringify(events)).not.toContain("secret-value");
   });
 });

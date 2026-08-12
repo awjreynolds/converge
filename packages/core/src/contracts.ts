@@ -155,6 +155,7 @@ export type AgentEvent =
   | { type: "error"; message: string };
 
 export interface AgentPort {
+  validate(): Promise<void>;
   run(request: AgentRunRequest): AsyncIterable<AgentEvent>;
   cancel(): Promise<void>;
   respondToExecutionApproval(requestId: string, decision: "approved" | "denied"): Promise<void>;

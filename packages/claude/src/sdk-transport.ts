@@ -39,6 +39,7 @@ export interface ClaudeSdkQueryOptions {
   settingSources: [];
   tools: string[];
   includePartialMessages: false;
+  pathToClaudeCodeExecutable: string;
   resume?: string;
   canUseTool: (
     toolName: string,
@@ -64,6 +65,7 @@ export type ClaudeSdkQueryFactory = (input: {
 
 export interface ClaudeSdkTransportOptions {
   query?: ClaudeSdkQueryFactory;
+  executablePath?: string;
 }
 
 interface PendingApproval {
@@ -83,11 +85,13 @@ interface ActiveRun {
 
 export class ClaudeSdkTransport implements ClaudeTransport {
   readonly #injectedQuery: ClaudeSdkQueryFactory | undefined;
+  readonly #executablePath: string;
   #active: ActiveRun | undefined;
   #disposed = false;
 
   constructor(options: ClaudeSdkTransportOptions = {}) {
     this.#injectedQuery = options.query;
+    this.#executablePath = options.executablePath ?? "claude";
   }
 
   async *run(request: ClaudeTransportRunRequest): AsyncIterable<ClaudeTransportEvent> {
@@ -154,11 +158,11 @@ export class ClaudeSdkTransport implements ClaudeTransport {
       else if (!active.receivedResult) {
         active.queue.push({ type: "error", message: "Claude Agent SDK disconnected unexpectedly." });
       }
-    } catch {
+    } catch (error) {
       active.queue.push(
         active.cancelled
           ? { type: "cancelled" }
-          : { type: "error", message: "Claude Agent SDK disconnected unexpectedly." },
+          : { type: "error", message: disconnectMessage(error) },
       );
     } finally {
       this.#settleApprovals(active, "denied");
@@ -182,6 +186,7 @@ export class ClaudeSdkTransport implements ClaudeTransport {
           ? ["Read", "Glob", "Grep"]
           : ["Read", "Glob", "Grep", ...mutatingTools],
       includePartialMessages: false,
+      pathToClaudeCodeExecutable: this.#executablePath,
       ...(request.resume === undefined ? {} : { resume: request.resume }),
       canUseTool: (toolName, input, options) =>
         this.#requestApproval(active, toolName, input, options),
@@ -208,6 +213,12 @@ export class ClaudeSdkTransport implements ClaudeTransport {
     input: Record<string, unknown>,
     options: ClaudeSdkPermissionOptions,
   ): Promise<ClaudeSdkPermissionResult> {
+    if (!SUPPORTED_MUTATING_TOOLS.has(toolName)) {
+      return deniedPermission(
+        options.toolUseID,
+        `Converge does not support Claude tool ${toolName}.`,
+      );
+    }
     if (active.cancelled || options.signal.aborted) {
       return deniedPermission(options.toolUseID, "Claude operation was cancelled.");
     }
@@ -273,6 +284,8 @@ export class ClaudeSdkTransport implements ClaudeTransport {
   }
 }
 
+const SUPPORTED_MUTATING_TOOLS = new Set(["Edit", "Write", "Bash"]);
+
 async function loadClaudeQuery(): Promise<ClaudeSdkQueryFactory> {
   const sdk = await import("@anthropic-ai/claude-agent-sdk");
   return sdk.query as unknown as ClaudeSdkQueryFactory;
@@ -323,6 +336,26 @@ function normalizedResultError(result: Record<string, unknown>): string {
     return "Claude authentication failed. Configure provider-owned API or cloud authentication.";
   }
   return "Claude could not complete the requested phase.";
+}
+
+function disconnectMessage(error: unknown): string {
+  const cause = error instanceof Error ? error.message : String(error);
+  const redacted = cause
+    .slice(0, 500)
+    .replace(
+      /\b(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN)\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+      "$1=[REDACTED]",
+    )
+    .replace(/\b(Bearer)\s+[^\s,;]+/gi, "$1 [REDACTED]")
+    .replace(
+      /\b(api[ _-]?key|auth(?:entication)?[ _-]?token|access[ _-]?token|credential|secret)\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+      "$1=[REDACTED]",
+    )
+    .replace(/\bsk-ant-[0-9A-Za-z_-]+\b/g, "[REDACTED]")
+    .trim();
+  return redacted.length > 0
+    ? `Claude Agent SDK disconnected unexpectedly: ${redacted}`
+    : "Claude Agent SDK disconnected unexpectedly.";
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

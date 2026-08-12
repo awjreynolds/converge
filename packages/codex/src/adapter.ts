@@ -45,10 +45,15 @@ interface PendingApproval extends ApprovalRequest {
   requestId: string;
 }
 
+interface StartingRun {
+  cancelled: boolean;
+}
+
 export class CodexAppServerAdapter implements AgentPort {
   readonly #client: AppServerProtocolClient;
   readonly #approvals = new Map<string, PendingApproval>();
   #activeRun: ActiveRun | undefined;
+  #startingRun: StartingRun | undefined;
   #disposed = false;
 
   constructor(options: CodexAppServerAdapterOptions = {}) {
@@ -68,15 +73,27 @@ export class CodexAppServerAdapter implements AgentPort {
     );
   }
 
+  async validate(): Promise<void> {
+    await this.#client.connect();
+  }
+
   async *run(request: AgentRunRequest): AsyncIterable<AgentEvent> {
-    if (this.#activeRun) {
+    if (this.#activeRun || this.#startingRun) {
       throw new Error("Codex adapter already has an active turn; wait for it to finish or cancel it.");
     }
-    await this.#client.connect();
-
-    const threadId = request.session.agent.conversationId
-      ? await this.#resumeThread(request)
-      : await this.#startThread(request);
+    const starting: StartingRun = { cancelled: false };
+    this.#startingRun = starting;
+    let threadId: string;
+    try {
+      await this.validate();
+      this.#throwIfStartingCancelled(starting);
+      threadId = request.session.agent.conversationId
+        ? await this.#resumeThread(request)
+        : await this.#startThread(request);
+      this.#throwIfStartingCancelled(starting);
+    } finally {
+      if (this.#startingRun === starting) this.#startingRun = undefined;
+    }
     const queue = new AsyncQueue<AgentEvent>();
     let resolveTurnReady = (): void => undefined;
     const turnReady = new Promise<void>((resolve) => {
@@ -143,7 +160,10 @@ export class CodexAppServerAdapter implements AgentPort {
 
   async cancel(): Promise<void> {
     const active = this.#activeRun;
-    if (!active) return;
+    if (!active) {
+      if (this.#startingRun) this.#startingRun.cancelled = true;
+      return;
+    }
     active.interruptPromise ??= (async () => {
       await active.turnReady;
       if (!active.turnId) return;
@@ -153,6 +173,12 @@ export class CodexAppServerAdapter implements AgentPort {
       });
     })();
     await active.interruptPromise;
+  }
+
+  #throwIfStartingCancelled(starting: StartingRun): void {
+    if (starting.cancelled) {
+      throw new AgentRunCancelledError("Codex run was cancelled during startup");
+    }
   }
 
   async respondToExecutionApproval(

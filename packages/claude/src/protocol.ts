@@ -1,5 +1,6 @@
 export const CLAUDE_PROVIDER_ID = "claude";
 export const TESTED_CLAUDE_AGENT_SDK_VERSION = "0.3.228";
+export const TESTED_CLAUDE_CLI_VERSION = "2.1.228";
 
 export interface ClaudeTransportRunRequest {
   prompt: string;
