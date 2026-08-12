@@ -1,4 +1,5 @@
 import { AgentRunCancelledError, AsyncQueue } from "@converge/core";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -168,6 +169,38 @@ describe("PiRpcTransport", () => {
     await expect(transport.respondToExecutionApproval("approval-1", "denied")).rejects.toThrow("Unknown or already resolved");
   });
 
+  it("denies a pending execution approval when its bounded wait expires", async () => {
+    const connection = new ReactiveConnection((message, current) => {
+      if (message.type === "get_state") current.queue.push(response(message.id, "get_state", { sessionId: "pi-session-1" }));
+      if (message.type === "prompt") {
+        current.queue.push({ type: "extension_ui_request", id: "approval-timeout", method: "confirm", title: PI_APPROVAL_SENTINEL, message: JSON.stringify({ toolName: "write", operation: "write src/auth.ts" }) });
+      }
+      if (message.type === "extension_ui_response") {
+        current.queue.push(toolResult(summary));
+        current.queue.push({ type: "agent_settled" });
+      }
+    });
+    const transport = new PiRpcTransport({
+      gateExtensionPath: "/converge/gate.js",
+      approvalTimeoutMs: 10,
+      connectionFactory: async () => connection,
+    });
+
+    const events = await collect(transport, runRequest({ approvalPolicy: "workspace-write" }));
+
+    expect(events).toContainEqual({
+      type: "execution-approval-requested",
+      requestId: "approval-timeout",
+      operation: "write src/auth.ts",
+    });
+    expect(connection.sent).toContainEqual({
+      type: "extension_ui_response",
+      id: "approval-timeout",
+      cancelled: true,
+    });
+    await expect(transport.respondToExecutionApproval("approval-timeout", "approved")).rejects.toThrow("Unknown or already resolved");
+  });
+
   it("denies unsupported extension UI without exposing an approval", async () => {
     const connection = new ReactiveConnection((message, current) => {
       if (message.type === "get_state") current.queue.push(response(message.id, "get_state", { sessionId: "pi-session-1" }));
@@ -220,6 +253,22 @@ describe("PiRpcTransport", () => {
     await expect(transport.respondToExecutionApproval("approval-1", "approved")).rejects.toThrow("Unknown or already resolved");
   });
 
+  it("cancels while Pi is actively prompting the selected model", async () => {
+    const connection = new ReactiveConnection((message, current) => {
+      if (message.type === "get_state") current.queue.push(response(message.id, "get_state", { sessionId: "pi-session-1" }));
+      if (message.type === "prompt") current.queue.push(response(message.id, "prompt"));
+    });
+    const transport = new PiRpcTransport({ gateExtensionPath: "/converge/gate.js", connectionFactory: async () => connection });
+    const iterator = transport.run(runRequest())[Symbol.asyncIterator]();
+    expect(await iterator.next()).toMatchObject({ value: { type: "conversation-started" } });
+
+    await transport.cancel();
+
+    expect(connection.sent).toContainEqual({ type: "abort" });
+    expect(await iterator.next()).toEqual({ done: false, value: { type: "cancelled" } });
+    expect(await iterator.next()).toEqual({ done: true, value: undefined });
+  });
+
   it("redacts secrets while retaining a bounded disconnect cause", async () => {
     const connection = new ReactiveConnection((message, current) => {
       if (message.type === "get_state") current.queue.push(response(message.id, "get_state", { sessionId: "pi-session-1" }));
@@ -231,16 +280,18 @@ describe("PiRpcTransport", () => {
 });
 
 function successfulRunConnection(): ReactiveConnection {
+  const messages = pinnedSuccessfulRunFixture();
   return new ReactiveConnection((message, current) => {
-    if (message.type === "get_state") current.queue.push(response(message.id, "get_state", { sessionId: "pi-session-1" }));
-    if (message.type === "prompt") {
-      current.queue.push(response(message.id, "prompt"));
-      current.queue.push({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", delta: "hidden" } });
-      current.queue.push({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Inspecting authorization" } });
-      current.queue.push(toolResult(summary));
-      current.queue.push({ type: "agent_settled" });
-    }
+    if (message.type === "get_state") current.queue.push(messages[0]);
+    if (message.type === "prompt") for (const event of messages.slice(1)) current.queue.push(event);
   });
+}
+
+function pinnedSuccessfulRunFixture(): unknown[] {
+  return readFileSync(new URL("../fixtures/pi-rpc-0.84.1/successful-run.jsonl", import.meta.url), "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as unknown);
 }
 
 function response(id: unknown, command: string, data?: unknown): Record<string, unknown> {

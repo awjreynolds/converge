@@ -20,10 +20,12 @@ export interface PiRpcTransportOptions {
   supportedCliVersion?: string;
   workspaceRoot?: string;
   connectionFactory?: PiRpcConnectionFactory;
+  approvalTimeoutMs?: number;
 }
 
 interface PendingApproval {
   connection: PiRpcConnection;
+  timeout: ReturnType<typeof setTimeout>;
 }
 
 interface ActiveRun {
@@ -46,6 +48,7 @@ const RUN_STATE_ID = "converge-run-state";
 const PROMPT_ID = "converge-prompt";
 const READ_ONLY_TOOLS = ["read", "grep", "find", "ls", "converge_result"];
 const MUTATING_TOOLS = ["bash", "edit", "write"];
+const DEFAULT_APPROVAL_TIMEOUT_MS = 5 * 60 * 1_000;
 
 export class PiRpcTransport implements PiTransport {
   readonly #executablePath: string;
@@ -53,6 +56,7 @@ export class PiRpcTransport implements PiTransport {
   readonly #supportedCliVersion: string;
   readonly #workspaceRoot: string;
   readonly #connectionFactory: PiRpcConnectionFactory;
+  readonly #approvalTimeoutMs: number;
   #active: ActiveRun | undefined;
   #validation: ActiveValidation | undefined;
   #disposed = false;
@@ -63,6 +67,10 @@ export class PiRpcTransport implements PiTransport {
     this.#supportedCliVersion = options.supportedCliVersion ?? TESTED_PI_CLI_VERSION;
     this.#workspaceRoot = options.workspaceRoot ?? process.cwd();
     this.#connectionFactory = options.connectionFactory ?? spawnPiRpcConnection;
+    this.#approvalTimeoutMs = options.approvalTimeoutMs ?? DEFAULT_APPROVAL_TIMEOUT_MS;
+    if (!Number.isFinite(this.#approvalTimeoutMs) || this.#approvalTimeoutMs <= 0) {
+      throw new Error("Pi approvalTimeoutMs must be a positive finite number.");
+    }
   }
 
   async validate(): Promise<void> {
@@ -167,6 +175,7 @@ export class PiRpcTransport implements PiTransport {
     if (!active || active.cancelled) return;
     active.cancelled = true;
     for (const [id, pending] of active.pending) {
+      clearTimeout(pending.timeout);
       await pending.connection.send({ type: "extension_ui_response", id, cancelled: true }).catch(() => {});
     }
     active.pending.clear();
@@ -178,6 +187,7 @@ export class PiRpcTransport implements PiTransport {
     const pending = this.#active?.pending.get(requestId);
     if (!pending) throw new Error(`Unknown or already resolved Pi execution approval ${requestId}.`);
     this.#active?.pending.delete(requestId);
+    clearTimeout(pending.timeout);
     await pending.connection.send({ type: "extension_ui_response", id: requestId, confirmed: decision === "approved" });
   }
 
@@ -250,6 +260,7 @@ export class PiRpcTransport implements PiTransport {
     } catch (error) {
       active.queue.push(active.cancelled ? { type: "cancelled" } : { type: "error", message: `Pi RPC disconnected unexpectedly: ${safeCause(error)}` });
     } finally {
+      for (const pending of active.pending.values()) clearTimeout(pending.timeout);
       active.pending.clear();
       await active.connection?.close();
       active.queue.close();
@@ -268,7 +279,13 @@ export class PiRpcTransport implements PiTransport {
       await connection.send({ type: "extension_ui_response", id, cancelled: true });
       return;
     }
-    active.pending.set(id, { connection });
+    const timeout = setTimeout(() => {
+      const pending = active.pending.get(id);
+      if (!pending) return;
+      active.pending.delete(id);
+      void pending.connection.send({ type: "extension_ui_response", id, cancelled: true }).catch(() => {});
+    }, this.#approvalTimeoutMs);
+    active.pending.set(id, { connection, timeout });
     active.queue.push({ type: "execution-approval-requested", requestId: id, operation: details.operation, ...(details.reason ? { reason: details.reason } : {}) });
   }
 }

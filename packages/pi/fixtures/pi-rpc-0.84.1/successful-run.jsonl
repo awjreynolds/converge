@@ -1,0 +1,11 @@
+{"id":"converge-run-state","type":"response","command":"get_state","success":true,"data":{"sessionId":"pi-session-1","sessionFile":"/fixture/pi-session-1.jsonl","model":{"provider":"anthropic","id":"claude-sonnet-4-5"},"isStreaming":false,"pendingMessageCount":0}}
+{"id":"converge-prompt","type":"response","command":"prompt","success":true}
+{"type":"agent_start"}
+{"type":"message_start","message":{"role":"assistant","content":[],"timestamp":1786570800000}}
+{"type":"message_update","message":{"role":"assistant","content":[],"timestamp":1786570800000},"assistantMessageEvent":{"type":"thinking_delta","delta":"hidden"}}
+{"type":"message_update","message":{"role":"assistant","content":[{"type":"text","text":"Inspecting authorization"}],"timestamp":1786570800000},"assistantMessageEvent":{"type":"text_delta","delta":"Inspecting authorization"}}
+{"type":"tool_execution_start","toolCallId":"result-1","toolName":"converge_result","args":{"result":{"type":"summary"}}}
+{"type":"tool_execution_end","toolCallId":"result-1","toolName":"converge_result","result":{"content":[{"type":"text","text":"Converge result recorded."}],"details":{"convergeResult":{"type":"summary","summary":"Done","concepts":[],"question":"Why?"}}},"isError":false}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Inspecting authorization"}],"timestamp":1786570800000}}
+{"type":"agent_end","messages":[]}
+{"type":"agent_settled"}
