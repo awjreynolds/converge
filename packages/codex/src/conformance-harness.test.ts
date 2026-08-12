@@ -22,6 +22,8 @@ function createCodexFixture(scenario: AgentPortConformanceScenario): AgentPortCo
     resumedConversationIds: [],
     approvalDecisions: [],
     cancellationCount: 0,
+    unsupportedRequestDenials: [],
+    disposalCount: 0,
   };
   const checkpoints = new Checkpoints();
   const transport = new CodexConformanceTransport(
@@ -67,6 +69,10 @@ class CodexConformanceTransport implements AppServerTransport {
         });
         this.completeTurn();
       }
+      if ("id" in message && message.id === "unsupported-1" && "error" in message) {
+        this.observations.unsupportedRequestDenials.push("unsupported-1");
+        this.completeTurn();
+      }
       return;
     }
     if (!("id" in message)) return;
@@ -97,7 +103,15 @@ class CodexConformanceTransport implements AppServerTransport {
           }, 0);
           return;
         }
-        if (this.scenario === "approval") {
+        if (this.scenario === "unsupported-request") {
+          this.push({
+            id: "unsupported-1",
+            method: "provider/unsupported/request",
+            params: { threadId: this.#threadId },
+          });
+          return;
+        }
+        if (this.scenario === "approval" || this.scenario === "dispose-during-run") {
           this.push({
             id: "approval-1",
             method: "item/commandExecution/requestApproval",
@@ -142,6 +156,8 @@ class CodexConformanceTransport implements AppServerTransport {
   }
 
   async close(): Promise<void> {
+    if (this.#closed) return;
+    this.observations.disposalCount += 1;
     this.#closed = true;
     this.#waiter?.();
   }

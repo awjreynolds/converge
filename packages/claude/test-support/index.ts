@@ -32,15 +32,19 @@ export class ScriptedClaudeTransport implements ClaudeTransport {
     resumedConversationIds: [],
     approvalDecisions: [],
     cancellationCount: 0,
+    unsupportedRequestDenials: [],
+    disposalCount: 0,
   };
   readonly #checkpoints = new Checkpoints();
   #approvalDecision: ((decision: "approved" | "denied") => void) | undefined;
   #cancelRun: (() => void) | undefined;
   #cancelled = false;
+  #disposed = false;
 
   constructor(readonly scenario: AgentPortConformanceScenario) {}
 
   async *run(request: ClaudeTransportRunRequest): AsyncIterable<ClaudeTransportEvent> {
+    if (this.#disposed) throw new Error("Claude transport is disposed.");
     this.#checkpoints.reach("run-started");
     if (request.resume) this.#observations.resumedConversationIds.push(request.resume);
 
@@ -59,7 +63,10 @@ export class ScriptedClaudeTransport implements ClaudeTransport {
       yield { type: "conversation-started", conversationId: "conformance-conversation" };
       yield { type: "progress", message: "Inspecting the authorization boundary." };
     }
-    if (this.scenario === "approval") {
+    if (this.scenario === "unsupported-request") {
+      this.#observations.unsupportedRequestDenials.push("unsupported-1");
+    }
+    if (this.scenario === "approval" || this.scenario === "dispose-during-run") {
       const decision = new Promise<"approved" | "denied">((resolve) => {
         this.#approvalDecision = resolve;
       });
@@ -71,6 +78,10 @@ export class ScriptedClaudeTransport implements ClaudeTransport {
       };
       this.#checkpoints.reach("approval-pending");
       await decision;
+      if (this.#cancelled) {
+        yield { type: "cancelled" };
+        return;
+      }
     }
     yield {
       type: "structured-result",
@@ -85,6 +96,9 @@ export class ScriptedClaudeTransport implements ClaudeTransport {
     if (this.#cancelled) return;
     this.#cancelled = true;
     this.#observations.cancellationCount += 1;
+    const resolveApproval = this.#approvalDecision;
+    this.#approvalDecision = undefined;
+    resolveApproval?.("denied");
     this.#cancelRun?.();
   }
 
@@ -102,7 +116,10 @@ export class ScriptedClaudeTransport implements ClaudeTransport {
   }
 
   async dispose(): Promise<void> {
-    this.#cancelRun?.();
+    if (this.#disposed) return;
+    this.#disposed = true;
+    this.#observations.disposalCount += 1;
+    await this.cancel();
   }
 
   waitFor(checkpoint: AgentPortConformanceCheckpoint): Promise<void> {
