@@ -101,6 +101,7 @@ export interface PairingSession {
 
 export type SessionAction =
   | { type: "investigation-started" }
+  | { type: "agent-thread-started"; threadId: string }
   | { type: "progress-reported"; message: string }
   | { type: "change-proposed"; changeId?: string; proposal: Omit<ChangeUnitRevision, "revision" | "proposedAt"> }
   | { type: "feedback-recorded"; changeId: string; feedback: Omit<HumanFeedback, "recordedAt"> }
