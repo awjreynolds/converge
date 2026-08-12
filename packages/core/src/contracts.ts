@@ -68,6 +68,7 @@ export interface ChangeUnit {
   revisions: ChangeUnitRevision[];
   humanFeedback: HumanFeedback[];
   discussionReplies: DiscussionReply[];
+  verificationTests: TestEvidence[];
   dependsOn: ChangeUnitId[];
 }
 

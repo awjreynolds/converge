@@ -200,6 +200,7 @@ describe("Pairing Session", () => {
       revisions: [{ title: "Add a coordinator" }],
       humanFeedback: [],
       discussionReplies: [],
+      verificationTests: [],
     });
     expect(session.changes).toHaveLength(1);
     expect(session.changes[0]).toMatchObject({
@@ -306,15 +307,22 @@ describe("Pairing Session", () => {
               proposedAt: "2026-08-12T09:00:00.000Z",
               tests: [
                 {
-                  command: "npm test",
-                  outcome: "expected-failure",
-                  summary: "Missing behavior reproduced.",
+                  command: "npm test -- existing-suite",
+                  outcome: "passed",
+                  summary: "Existing happy-path coverage passes.",
                 },
               ],
             },
           ],
           humanFeedback: [],
           discussionReplies: [],
+          verificationTests: [
+            {
+              command: "npm test",
+              outcome: "expected-failure",
+              summary: "Missing behavior reproduced.",
+            },
+          ],
           dependsOn: [],
         },
       ],
@@ -420,6 +428,13 @@ function verifiedSession(): PairingSession {
         ],
         humanFeedback: [],
         discussionReplies: [],
+        verificationTests: [
+          {
+            command: "npm test",
+            outcome: "passed",
+            summary: "Revoked sessions are rejected.",
+          },
+        ],
         dependsOn: [],
       },
     ],

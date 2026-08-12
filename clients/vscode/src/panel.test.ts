@@ -31,6 +31,7 @@ const session: PairingSession = {
         },
       ],
       discussionReplies: [],
+      verificationTests: [],
       revisions: [
         {
           revision: 1,
@@ -79,6 +80,7 @@ const session: PairingSession = {
       dependsOn: [],
       humanFeedback: [],
       discussionReplies: [],
+      verificationTests: [],
       revisions: [
         {
           revision: 1,

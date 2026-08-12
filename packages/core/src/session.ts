@@ -92,6 +92,7 @@ export function applySessionAction(
               ...change.revisions,
               { ...action.proposal, revision: nextRevision, proposedAt: updatedAt },
             ],
+            verificationTests: [],
           },
           { status: "awaiting-human", updatedAt, activeChangeId: change.id },
         );
@@ -107,6 +108,7 @@ export function applySessionAction(
         revisions: [{ ...action.proposal, revision: 1, proposedAt: updatedAt }],
         humanFeedback: [],
         discussionReplies: [],
+        verificationTests: [],
         dependsOn: [],
       };
       return {
@@ -222,7 +224,12 @@ export function applySessionAction(
         );
       return replaceChange(
         session,
-        { ...change, status: passed ? "verified" : "implemented", revisions: replaceCurrentRevision(change, updatedRevision) },
+        {
+          ...change,
+          status: passed ? "verified" : "implemented",
+          revisions: replaceCurrentRevision(change, updatedRevision),
+          verificationTests: [...action.tests],
+        },
         passed
           ? { status: "investigating", updatedAt, activeChangeId: null }
           : { status: "awaiting-human", updatedAt },
@@ -241,9 +248,7 @@ export function applySessionAction(
         !session.changes.some(
           (change) =>
             change.status === "verified" &&
-            change.revisions.some((revision) =>
-              revision.tests.some((test) => test.outcome === "passed"),
-            ),
+            change.verificationTests.some((test) => test.outcome === "passed"),
         )
       ) {
         throw invalid(
