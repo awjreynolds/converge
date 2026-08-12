@@ -49,6 +49,12 @@ The repository includes [`fixtures/revoked-session`](fixtures/revoked-session), 
 
 Follow the [complete walkthrough](docs/walkthrough.md) to exercise investigation, proposal, discussion or redirection, approval, implementation, native diff inspection, verification, and the final Understanding Check.
 
+The same red-to-green journey is executable without Codex or VS Code. It edits only a disposable fixture copy, runs the real fixture tests, confirms shared understanding, and removes the copy:
+
+```bash
+npm run test:e2e
+```
+
 ## Architecture
 
 ```text
