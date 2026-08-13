@@ -53,11 +53,13 @@ export function createExtensionController(
 ): ExtensionController {
   let session: PairingSession | undefined;
   let busy = false;
+  let startingSpecification: string | undefined;
   let pendingExecutionApproval: ExecutionApproval | undefined;
   let notice: PanelSnapshot["notice"];
 
   const snapshot = (): PanelSnapshot => ({
     session,
+    ...(startingSpecification === undefined ? {} : { startingSpecification }),
     workspaceTrusted: dependencies.host.isWorkspaceTrusted(),
     busy,
     provider: dependencies.provider,
@@ -171,7 +173,11 @@ export function createExtensionController(
 
       switch (action.type) {
         case "start-session":
+          startingSpecification = action.specification;
+          session = undefined;
           await perform(() => dependencies.driver.startSession(action.specification));
+          startingSpecification = undefined;
+          await publish();
           return;
         case "respond-to-change":
           if (!session) {

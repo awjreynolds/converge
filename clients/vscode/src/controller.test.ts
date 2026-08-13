@@ -195,4 +195,35 @@ describe("createExtensionController", () => {
       notice: { tone: "info", message: "Agent stopped. You can retry the action." },
     });
   });
+
+  it("does not show the previous Pairing Session while a new one is starting", async () => {
+    const { controller, driver, host, snapshots } = harness();
+    vi.mocked(host.readSession).mockResolvedValue(session);
+    let finishStart: ((next: PairingSession) => void) | undefined;
+    vi.mocked(driver.startSession).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishStart = resolve;
+        }),
+    );
+    await controller.initialize();
+
+    const starting = controller.handlePanelAction({
+      type: "start-session",
+      specification: "Build a different change",
+    });
+    await vi.waitFor(() => expect(snapshots.at(-1)?.busy).toBe(true));
+
+    expect(snapshots.at(-1)).toMatchObject({
+      session: undefined,
+      startingSpecification: "Build a different change",
+    });
+
+    finishStart?.({
+      ...session,
+      id: "session-2",
+      specification: "Build a different change",
+    });
+    await starting;
+  });
 });

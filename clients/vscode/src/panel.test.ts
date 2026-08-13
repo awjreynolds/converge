@@ -163,6 +163,19 @@ describe("reducePanelUiState", () => {
 });
 
 describe("renderReasoningPanel", () => {
+  it("shows the new task and visible provider activity while a Pairing Session starts", () => {
+    const html = renderReasoningPanel(
+      snapshot({
+        busy: true,
+        startingSpecification: "Build a different change",
+      }),
+    );
+
+    expect(html).toContain("Build a different change");
+    expect(html).toContain("OpenAI Codex is starting the Pairing Session");
+    expect(html).not.toContain("Prevent revoked sessions from refreshing");
+  });
+
   it("shows the selected provider, capability gaps, and a stop action while busy", () => {
     const html = renderReasoningPanel(snapshot({ busy: true }));
 
@@ -204,6 +217,28 @@ describe("renderReasoningPanel", () => {
     expect(html).toContain("change-card completed");
   });
 
+  it("keeps the active human decision composer in the contextual pairing dock", () => {
+    const html = renderReasoningPanel(snapshot());
+
+    expect(html).toContain('<section class="pairing-dock"');
+    expect(html).toMatch(/pairing-dock[\s\S]*data-action="discuss"/);
+    expect(html).toMatch(/pairing-dock[\s\S]*data-action="approve"/);
+    expect(html.match(/class="pairing-dock"/g)).toHaveLength(1);
+  });
+
+  it("keeps the next-step pairing command outside a completed Change Unit's collapsed details", () => {
+    const { activeChangeId: _activeChangeId, ...sessionWithoutActiveChange } = session;
+    const completedActiveSession: PairingSession = {
+      ...sessionWithoutActiveChange,
+      status: "investigating",
+    };
+
+    const html = renderReasoningPanel(snapshot({ session: completedActiveSession }));
+
+    expect(html).toMatch(/<\/main><section class="pairing-dock"/);
+    expect(html).toMatch(/pairing-dock[\s\S]*data-action="continue"/);
+  });
+
   it("shows an isolated execution approval and disables mutating actions in an untrusted workspace", () => {
     const html = renderReasoningPanel(
       snapshot({
@@ -219,8 +254,10 @@ describe("renderReasoningPanel", () => {
     expect(html).toContain("Restricted Mode");
     expect(html).toContain("Execution permission");
     expect(html).toContain("npm test");
+    expect(html).toMatch(/pairing-dock[\s\S]*data-action="allow-execution"/);
+    expect(html).toMatch(/pairing-dock[\s\S]*data-action="deny-execution"/);
     expect(html).toContain("data-action=\"allow-execution\"");
-    expect(html).toMatch(/data-action="approve"[^>]*disabled/);
+    expect(html).not.toContain('data-action="approve"');
     expect(html).toMatch(/data-action="allow-execution"[^>]*disabled/);
   });
 

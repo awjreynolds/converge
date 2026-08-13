@@ -13,6 +13,7 @@ export interface ExecutionApproval {
 
 export interface PanelSnapshot {
   session: PairingSession | undefined;
+  startingSpecification?: string;
   workspaceTrusted: boolean;
   busy: boolean;
   provider: AgentProviderPresentation;
@@ -178,12 +179,11 @@ function button(
   return `<button class="button ${kind}" data-action="${action}"${disabled ? " disabled" : ""}>${label}</button>`;
 }
 
-function renderChange(change: ChangeUnit, snapshot: PanelSnapshot): string {
+function renderChange(change: ChangeUnit): string {
   const current = change.revisions.find((revision) => revision.revision === change.currentRevision);
   if (!current) return "";
 
   const completed = completedStatuses.has(change.status);
-  const canDecide = decisionStatuses.has(change.status) && !snapshot.busy && snapshot.workspaceTrusted;
   const history = change.revisions.filter((revision) => revision.revision !== change.currentRevision);
   const fileButtons = current.affectedFiles
     .map(
@@ -222,7 +222,6 @@ function renderChange(change: ChangeUnit, snapshot: PanelSnapshot): string {
     ${current.risks.length ? `<section><h4>Risk</h4><ul>${current.risks.map((risk) => `<li>${escapeText(risk)}</li>`).join("")}</ul></section>` : ""}
     ${fileButtons ? `<section><h4>Scope</h4><div class="file-list">${fileButtons}</div></section>` : ""}
     ${evidence}${tests}${visualisations}${feedback}${discussionReplies}${revisionHistory}
-    ${decisionStatuses.has(change.status) ? `<label class="feedback-label" for="feedback-${escapeAttribute(change.id)}">Discuss or redirect</label><textarea id="feedback-${escapeAttribute(change.id)}" data-feedback-for="${escapeAttribute(change.id)}" rows="3" placeholder="Ask a question or explain a different direction"></textarea><div class="actions">${button("Discuss", "discuss", !canDecide)}${button("Redirect", "redirect", !canDecide)}${button("Reject", "reject", !canDecide, "danger")}${button("Approve", "approve", !canDecide, "primary")}</div>` : change.status === "approved" ? `<div class="actions">${button("Apply approved change", "continue", snapshot.busy || !snapshot.workspaceTrusted, "primary")}</div>` : change.status === "implemented" ? `<div class="actions">${button("Run verification", "continue", snapshot.busy || !snapshot.workspaceTrusted, "primary")}</div>` : change.status === "verified" || change.status === "rejected" ? `<div class="actions">${button("Next Change Unit", "continue", snapshot.busy || !snapshot.workspaceTrusted, "primary")}</div>` : ""}
   </div>`;
 
   return `<article class="change-card${completed ? " completed" : ""}" data-change-id="${escapeAttribute(change.id)}">
@@ -231,7 +230,7 @@ function renderChange(change: ChangeUnit, snapshot: PanelSnapshot): string {
   </article>`;
 }
 
-function renderUnderstanding(session: PairingSession, trusted: boolean, busy: boolean): string {
+function renderUnderstanding(session: PairingSession): string {
   const check = session.understandingCheck;
   if (!check) return "";
   return `<section class="understanding">
@@ -240,10 +239,68 @@ function renderUnderstanding(session: PairingSession, trusted: boolean, busy: bo
     <ol>${check.concepts.map((concept) => `<li>${escapeText(concept)}</li>`).join("")}</ol>
     <h3>${escapeText(check.question)}</h3>
     ${check.answer ? `<blockquote>${escapeText(check.answer)}</blockquote>` : ""}
-    ${check.assessment !== "aligned" ? `<textarea id="understanding-answer" rows="4" placeholder="${check.assessment === "mismatch" ? "Clarify your model or explain what remains confusing" : "Explain the resulting system in your own words"}"></textarea>${button(check.assessment === "mismatch" ? "Recheck understanding" : "Share understanding", "answer-understanding", busy || !trusted, "primary")}` : ""}
     ${check.assessment ? `<div class="assessment ${escapeAttribute(check.assessment)}"><strong>${escapeText(check.assessment)}</strong>${check.explanation ? `<p>${escapeText(check.explanation)}</p>` : ""}</div>` : ""}
-    ${check.assessment === "aligned" ? button("Confirm shared understanding", "confirm-convergence", busy || !trusted, "primary") : ""}
   </section>`;
+}
+
+function pairingDock(
+  content: string,
+  options: { className?: string; changeId?: string; role?: "status" } = {},
+): string {
+  const className = options.className ? ` ${options.className}` : "";
+  const changeId = options.changeId
+    ? ` data-change-id="${escapeAttribute(options.changeId)}"`
+    : "";
+  const role = options.role ? ` role="${options.role}"` : "";
+  return `<section class="pairing-dock${className}"${changeId}${role}>${content}</section>`;
+}
+
+function renderPairingDock(snapshot: PanelSnapshot): string {
+  const approval = snapshot.pendingExecutionApproval;
+  if (approval) {
+    return pairingDock(
+      `<span class="eyebrow">Separate host permission</span><h2>Execution permission</h2><code>${escapeText(approval.operation)}</code>${approval.reason ? `<p>${escapeText(approval.reason)}</p>` : ""}<div class="actions">${button("Deny", "deny-execution", !snapshot.workspaceTrusted, "danger")}${button("Allow once", "allow-execution", !snapshot.workspaceTrusted, "primary")}${snapshot.busy ? button("Stop agent", "stop-agent", false, "danger") : ""}</div><input type="hidden" data-execution-request-id value="${escapeAttribute(approval.requestId)}">`,
+      { className: "execution-dock", role: "status" },
+    );
+  }
+  if (snapshot.busy) {
+    return pairingDock(
+      `<div><strong>${escapeText(snapshot.provider.label)} is working</strong><p>You can stop the active provider turn without approving any workspace change.</p></div><div class="actions">${button("Stop agent", "stop-agent", false, "danger")}</div>`,
+      { className: "agent-dock", role: "status" },
+    );
+  }
+
+  const session = snapshot.session;
+  if (!session) return "";
+  const check = session.understandingCheck;
+  if (check) {
+    return check.assessment === "aligned"
+      ? pairingDock(`<div class="actions">${button("Confirm shared understanding", "confirm-convergence", !snapshot.workspaceTrusted, "primary")}</div>`)
+      : pairingDock(`<textarea id="understanding-answer" rows="4" placeholder="${check.assessment === "mismatch" ? "Clarify your model or explain what remains confusing" : "Explain the resulting system in your own words"}"></textarea><div class="actions">${button(check.assessment === "mismatch" ? "Recheck understanding" : "Share understanding", "answer-understanding", !snapshot.workspaceTrusted, "primary")}</div>`);
+  }
+
+  const change = session.activeChangeId
+    ? session.changes.find((candidate) => candidate.id === session.activeChangeId)
+    : session.status === "investigating"
+      ? [...session.changes].reverse().find((candidate) => candidate.status === "verified" || candidate.status === "rejected")
+      : undefined;
+  if (!change) return "";
+  if (decisionStatuses.has(change.status)) {
+    return pairingDock(
+      `<label class="feedback-label" for="feedback-${escapeAttribute(change.id)}">Discuss or redirect</label><textarea id="feedback-${escapeAttribute(change.id)}" data-feedback-for="${escapeAttribute(change.id)}" rows="3" placeholder="Ask a question or explain a different direction"></textarea><div class="actions">${button("Discuss", "discuss", !snapshot.workspaceTrusted)}${button("Redirect", "redirect", !snapshot.workspaceTrusted)}${button("Reject", "reject", !snapshot.workspaceTrusted, "danger")}${button("Approve", "approve", !snapshot.workspaceTrusted, "primary")}</div>`,
+      { changeId: change.id },
+    );
+  }
+  const label = change.status === "approved"
+    ? "Apply approved change"
+    : change.status === "implemented"
+      ? "Run verification"
+      : change.status === "verified" || change.status === "rejected"
+        ? "Next Change Unit"
+        : undefined;
+  return label
+    ? pairingDock(`<div class="actions">${button(label, "continue", !snapshot.workspaceTrusted, "primary")}</div>`, { changeId: change.id })
+    : "";
 }
 
 export function renderReasoningPanel(snapshot: PanelSnapshot): string {
@@ -252,9 +309,6 @@ export function renderReasoningPanel(snapshot: PanelSnapshot): string {
     : `<aside class="trust-banner"><strong>Restricted Mode</strong><p>You can inspect this Pairing Session, but agent and execution actions are disabled until the workspace is trusted.</p></aside>`;
   const notice = snapshot.notice
     ? `<aside class="notice ${snapshot.notice.tone}" role="status">${escapeText(snapshot.notice.message)}</aside>`
-    : "";
-  const approval = snapshot.pendingExecutionApproval
-    ? `<aside class="execution-approval"><span class="eyebrow">Separate host permission</span><h2>Execution permission</h2><code>${escapeText(snapshot.pendingExecutionApproval.operation)}</code>${snapshot.pendingExecutionApproval.reason ? `<p>${escapeText(snapshot.pendingExecutionApproval.reason)}</p>` : ""}<div class="actions">${button("Deny", "deny-execution", !snapshot.workspaceTrusted, "danger")}${button("Allow once", "allow-execution", !snapshot.workspaceTrusted, "primary")}</div><input type="hidden" data-execution-request-id value="${escapeAttribute(snapshot.pendingExecutionApproval.requestId)}"></aside>`
     : "";
   const capabilityItems = snapshot.provider.capabilities
     .map(
@@ -265,10 +319,18 @@ export function renderReasoningPanel(snapshot: PanelSnapshot): string {
   const limitations = snapshot.provider.limitations.length
     ? `<details class="provider-limitations"><summary>Provider limitations</summary><ul>${snapshot.provider.limitations.map((limitation) => `<li>${escapeText(limitation)}</li>`).join("")}</ul><p>${escapeText(snapshot.provider.setupGuidance)}</p></details>`
     : "";
-  const provider = `<aside class="provider-status"><span class="eyebrow">Agent provider</span><strong>${escapeText(snapshot.provider.label)}</strong><ul>${capabilityItems}</ul>${limitations}${snapshot.busy ? button("Stop agent", "stop-agent", false, "danger") : ""}</aside>`;
+  const provider = `<aside class="provider-status"><span class="eyebrow">Agent provider</span><strong>${escapeText(snapshot.provider.label)}</strong><ul>${capabilityItems}</ul>${limitations}</aside>`;
+  const dock = renderPairingDock(snapshot);
+
+  if (snapshot.startingSpecification) {
+    return `${trustBanner}${notice}${provider}<main>
+      <header class="session-header"><div><span class="eyebrow">Pairing Session</span><h1>${escapeText(snapshot.startingSpecification)}</h1></div><span class="session-status">starting</span></header>
+      <section class="agent-activity" role="status"><span class="activity-indicator" aria-hidden="true"></span><div><strong>${escapeText(snapshot.provider.label)} is starting the Pairing Session</strong><p>Validating the provider and beginning the investigation.</p></div></section>
+    </main>${dock}`;
+  }
 
   if (!snapshot.session) {
-    return `${trustBanner}${notice}${provider}<main class="empty"><span class="brand-mark">&gt;&lt;</span><h1>Converge</h1><p>Keep your mental model aligned while an agent implements.</p><label for="specification">Task or specification</label><textarea id="specification" rows="8" placeholder="Describe the change to build"></textarea>${button("Start Pairing Session", "start-session", snapshot.busy || !snapshot.workspaceTrusted, "primary")}</main>`;
+    return `${trustBanner}${notice}${provider}<main class="empty"><span class="brand-mark">&gt;&lt;</span><h1>Converge</h1><p>Keep your mental model aligned while an agent implements.</p><label for="specification">Task or specification</label><textarea id="specification" rows="8" placeholder="Describe the change to build"></textarea>${button("Start Pairing Session", "start-session", snapshot.busy || !snapshot.workspaceTrusted, "primary")}</main>${dock}`;
   }
 
   const session = snapshot.session;
@@ -284,8 +346,7 @@ export function renderReasoningPanel(snapshot: PanelSnapshot): string {
     <header class="session-header"><div><span class="eyebrow">Pairing Session</span><h1>${escapeText(session.specification)}</h1></div><span class="session-status">${escapeText(renderStatus(session.status))}</span></header>
     <section class="session-progress"><div class="progress-summary"><strong>${verified} of ${session.changes.length} verified</strong><span>${escapeText(session.status)}</span></div><progress value="${verified}" max="${Math.max(session.changes.length, 1)}"></progress>${progress}</section>
     ${blockedReason}
-    ${approval}
-    <section class="changes" aria-label="Change Units">${session.changes.map((change) => renderChange(change, snapshot)).join("")}</section>
-    ${renderUnderstanding(session, snapshot.workspaceTrusted, snapshot.busy)}
-  </main>`;
+    <section class="changes" aria-label="Change Units">${session.changes.map((change) => renderChange(change)).join("")}</section>
+    ${renderUnderstanding(session)}
+  </main>${dock}`;
 }
