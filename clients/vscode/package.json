@@ -116,7 +116,7 @@
     "@converge/codex": "*",
     "@converge/core": "*",
     "@converge/pi": "*",
-    "mermaid": "^11.16.1"
+    "mermaid": "^11.17.2"
   },
   "files": [
     "dist/extension.cjs",
